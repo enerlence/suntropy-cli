@@ -4,6 +4,8 @@ import { registerConfigCommands } from './commands/config.js';
 import { registerInventoryCommands } from './commands/inventory/index.js';
 import { registerStudiesCommands } from './commands/studies/index.js';
 import { registerCurvesCommands } from './commands/curves/index.js';
+import { registerConsumptionCommands } from './commands/consumption/index.js';
+import { registerSolarformCommands } from './commands/solarform/index.js';
 
 export function createProgram(): Command {
   const program = new Command();
@@ -26,6 +28,8 @@ export function createProgram(): Command {
   registerInventoryCommands(program);
   registerStudiesCommands(program);
   registerCurvesCommands(program);
+  registerConsumptionCommands(program);
+  registerSolarformCommands(program);
 
   return program;
 }

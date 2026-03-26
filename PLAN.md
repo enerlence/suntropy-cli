@@ -359,6 +359,94 @@ suntropy curves aggregate --a /tmp/excesses.json --b /tmp/other_curve.json
 
 ---
 
+### FASE 2b: Consumo y SolarForm
+
+**Generacion de curvas de consumo (servicio profiles - puerto 8085):**
+
+El servicio de profiles genera curvas de consumo (PowerCurve) a partir de diferentes inputs:
+- Patrones predefinidos: Balance, Nightly, Morning, Afternoon, Domestic, Commercial
+- Perfiles REE (Red Electrica) como base horaria
+- Consumo mensual personalizado
+- Perfiles de consumo custom (patron mensual + semanal + horario)
+- Archivos (EREDES ZIP para Portugal)
+
+```bash
+# Estimar consumo con patron predefinido
+suntropy consumption estimate --annual 5000 --pattern Balance
+suntropy consumption estimate --annual 8000 --pattern Domestic --tariff 3.0TD --market es
+
+# Estimar con datos mensuales
+suntropy consumption estimate --annual 5000 --monthly-data '{"1":500,"2":450,...,"12":400}'
+
+# Estimar con perfil custom
+suntropy consumption estimate --annual 6000 --custom-profile-id abc123
+
+# Obtener perfiles REE base
+suntropy consumption ree-profiles --start 2025-01-01 --end 2025-12-31 --tariff 3.0TD
+
+# Tags de perfiles custom del cliente
+suntropy consumption custom-tags
+suntropy consumption custom-profile-info --id <profileId>
+
+# Desde archivo (EREDES ZIP)
+suntropy consumption from-file --eredes-zip /path/to/file.zip
+```
+
+**Endpoints profiles:**
+- `POST /consumption-estimation` - Generar PowerCurve (query: startDate, endDate, tariff, type, anualConsumption, consumptionType, customProfileId, market; body: dailyCurve, consumptionByMonth, customProfile)
+- `GET /ree-profiles` - Obtener perfiles REE (query: startDate, endDate, tariff, type, market)
+- `GET /custom-profiles/getTags` - Tags de perfiles custom
+- `GET /custom-profiles/getInfo` - Detalle de perfil custom
+- `POST /consumption-files-processor/portugal/eredes-zip` - Procesar ZIP EREDES
+
+**Creacion de estudios via SolarForm:**
+
+Dos modos para crear estudios solares:
+- **simple**: Parametros minimos (region, consumo, patron) → el backend optimiza kit, resuelve coordenadas, calcula todo
+- **calculate**: Control completo con body JSON (coordenadas, superficies, consumo, cliente, tarifa)
+
+```bash
+# Modo simple (minimo input, maximo autocompletado)
+suntropy solarform simple --region "Andalucía" --sub-region "Sevilla" --consumption 5000
+suntropy solarform simple --region "Madrid" --sub-region "Madrid" --consumption 8000 --pattern Domestic --save
+suntropy solarform simple --region "Cataluña" --sub-region "Barcelona" --consumption 300 --consumption-mode monthlySpending --kit-id abc123
+
+# Modo calculate (control total)
+suntropy solarform calculate --data '{"center":{"lat":37.39,"lng":-5.99},"consumptionMode":"consumptionPatterns",...}' --save
+cat study-input.json | suntropy solarform calculate --data - --save --email client@co.com
+
+# Config del formulario solar
+suntropy solarform config
+
+# Estadisticas de formularios
+suntropy solarform statistics --create --data '{"email":"test@co.com"}'
+suntropy solarform statistics --update --data '{"idSolarFormStatistics":"abc","completed":true}'
+```
+
+**Endpoints solarform:**
+- `POST /api/solar-form` - Calculo completo (auth, query: save, email; body: SimplifiedSolarStudyClass)
+- `POST /api/solar-form/simple` - Calculo simplificado (auth, query: save, email, solarKitId, excessesCompensationMode; body: region, subRegion, selectedConsumptionPattern, consumptionQuantity, consumptionQuantityIntroductionMode)
+- `GET /solar-form/solar-form-config` - Configuracion del formulario
+- `POST /solar-form/solar-form-statistics` - Crear estadistica
+- `PUT /solar-form/solar-form-statistics` - Actualizar estadistica
+
+**Ejemplo flujo agente: generar consumo y crear estudio:**
+```bash
+# 1. Generar curva de consumo domestico
+suntropy consumption estimate --annual 5000 --pattern Domestic --save /tmp/cons.json
+
+# 2. Verificar total
+suntropy curves total --input /tmp/cons.json
+
+# 3. Crear estudio con solarform simple
+suntropy solarform simple --region "Andalucía" --sub-region "Sevilla" --consumption 5000 --pattern Domestic --save
+
+# 4. O usar el flujo completo con calculate
+suntropy solarform calculate --data '{"center":{"lat":37.39,"lng":-5.99},...}' --save
+```
+
+---
+
 ### FASE 3: Plantillas
 
 **NOTA: El endpoint renderTemplate (PDF) no funciona actualmente. No se implementa.**
@@ -510,19 +598,42 @@ Solar Panels (showing 1-20 of 45)
    - Config profiles, HTTP client, output formatter (JSON/human/csv), auth (set-key, login, status, refresh), config CRUD
    - Nota: API devuelve tuplas `[items[], total, ...]` - detectado y manejado en factory
 
-2. **Fase 1** - Inventory - COMPLETADA (2026-03-25)
+2. **Fase 1** - Inventory - COMPLETADA (2026-03-25, actualizada 2026-03-26)
    - Factory CRUD generica (list, get, create, update, delete, delete-batch, filter)
+   - Factory soporta: `getPath` (rutas custom), `getViaFilter` (cuando no hay GET :id), `putBodyOnly`
    - 9 recursos: panels, inverters, batteries, chargers, heatpumps, custom-assets, custom-asset-types, charger-kits, heatpump-kits
    - Manufacturers (list, create)
-   - Kits con sub-recursos (panels, inverters, batteries) + archive
-   - Testeado contra API produccion con creacion de elementos TEST_CLI_*
+   - Kits con sub-recursos (panels, inverters, batteries) + archive + **assemble** (ensamblaje por flags)
+   - Custom fields: CRUD completo (`/custom-asset/custom-field`)
+   - Custom assets: flujo completo Tipo→Campos→Asset probado (create con campos inline y opciones)
+   - Kits assemble con `--custom-asset <id>:<units>` repetible
+   - Fix: custom-assets/types usan `/custom-asset/id/:id` y `/custom-asset/type/id/:id`
+   - Fix: kits GET usa getViaFilter (no hay GET /:id en el controller)
+   - Testeado contra API produccion: CRUD completo + kit con custom assets asociados
 
-3. **Fase 2** - Studies + Curves - COMPLETADA (2026-03-25)
+3. **Fase 2** - Studies + Curves - COMPLETADA (2026-03-25, actualizada 2026-03-26)
    - Studies: list (con filtros), metadata, get (exploracion progresiva con --expand), curves (stats/monthly/daily/total/raw)
    - calculate-production, optimize-surfaces
-   - PowerCurve standalone: stats, total, multiply, aggregate, subtract, filter-positive, filter-negative, sort, filter-dates, to-serie
+   - PowerCurve standalone: stats, total, multiply, aggregate, subtract, filter-positive, filter-negative, sort, filter-dates, to-serie, **by-period**
+   - `by-period`: usa `PowerCurve.aggregateByPeriod(periodDistribution)` para agregar kWh por periodo tarifario P1-P6
    - Piping via stdin y --input verificado. --save funciona como tee
    - energy-types importado como dependencia directa (PowerCurve.calculateStatistics() devuelve {identifier, statistics})
 
-4. **Fase 3** - Templates - PENDIENTE
+4. **Fase 2b** - Consumption + SolarForm - COMPLETADA (2026-03-25, actualizada 2026-03-26)
+   - Consumption: estimate (patrones REE + datos mensuales + custom profiles), ree-profiles, custom-tags, custom-profile-info, from-file (EREDES ZIP), **periods**
+   - `periods`: obtiene distribucion horaria de periodos (P1-P6) del servicio periods (GET /periodos, puerto 8084)
+   - SolarForm: simple (region/subregion + consumo → estudio optimizado), calculate (full body JSON con locationMode), config, statistics
+   - Output compactado: PowerCurves reemplazadas con `{_type, days, identifier}` en resultados de solarform
+   - Fix: unwrap PublicApiResponse `{code, data, error}` — prioriza data sobre error cuando ambos presentes
+   - Fix: calculate con body incompleto muestra error descriptivo sugiriendo usar simple
+   - Pipe compatible: consumo estimado → curves stats/total/by-period
+   - Servicio profiles (puerto 8085) y periods (puerto 8084) integrados en client.ts
+   - Flujo completo validado: precios por periodo → consumo → produccion → excedentes → ahorro → ROI
+
+5. **Skills** - `skills/` directory (2026-03-26)
+   - `solar-study.md`: estudio solar completo paso a paso (consumo → produccion → curvas → ahorro por periodo → ROI)
+   - `inventory-create.md`: guia de creacion de cualquier elemento de inventario, con wikilink a kit
+   - `inventory-create-kit.md`: guia detallada de ensamblaje de kits con componentes y custom assets
+
+6. **Fase 3** - Templates - PENDIENTE
    - CRUD plantillas, manipulacion de paginas y componentes, defaults, condicionales

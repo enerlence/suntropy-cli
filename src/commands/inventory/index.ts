@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { createResourceCommands, type ResourceConfig } from './factory.js';
 import { registerKitsCommands } from './kits.js';
 import { registerManufacturersCommands } from './manufacturers.js';
+import { registerCustomFieldsCommands } from './custom-fields.js';
 
 const RESOURCES: ResourceConfig[] = [
   {
@@ -53,6 +54,7 @@ const RESOURCES: ResourceConfig[] = [
     basePath: '/custom-asset',
     idField: 'idCustomAsset',
     listFields: ['label', 'customAssetType', 'identifier', 'isMaterial', 'costPerUnit', 'active'],
+    getPath: '/custom-asset/id/:id',
   },
   {
     name: 'custom-asset-types',
@@ -60,6 +62,7 @@ const RESOURCES: ResourceConfig[] = [
     basePath: '/custom-asset/type',
     idField: 'idCustomAssetType',
     listFields: ['label', 'isMaterialConcept', 'panelsQuantity'],
+    getPath: '/custom-asset/type/id/:id',
   },
   {
     name: 'charger-kits',
@@ -93,6 +96,9 @@ export function registerInventoryCommands(program: Command): void {
   for (const resource of RESOURCES) {
     inventory.addCommand(createResourceCommands(resource));
   }
+
+  // Register custom fields (separate CRUD)
+  registerCustomFieldsCommands(inventory);
 
   // Register kits (complex - has sub-resources)
   registerKitsCommands(inventory);

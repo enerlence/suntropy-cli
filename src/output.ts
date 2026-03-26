@@ -103,8 +103,17 @@ export function output(data: unknown, opts: OutputOptions = {}): void {
 }
 
 export function outputError(err: unknown): void {
-  const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(JSON.stringify({ error: true, message: msg }) + '\n');
+  if (err && typeof err === 'object' && 'error' in err) {
+    // ApiError object — include details
+    const apiErr = err as { error: boolean; status?: number; message?: string; details?: unknown };
+    const out: Record<string, unknown> = { error: true, message: apiErr.message || 'Unknown error' };
+    if (apiErr.status) out.status = apiErr.status;
+    if (apiErr.details) out.details = apiErr.details;
+    process.stderr.write(JSON.stringify(out) + '\n');
+  } else {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(JSON.stringify({ error: true, message: msg }) + '\n');
+  }
   process.exitCode = 1;
 }
 

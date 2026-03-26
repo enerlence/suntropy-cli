@@ -221,4 +221,30 @@ export function registerCurvesCommands(program: Command): void {
         outputError(err);
       }
     });
+
+  // --- by-period ---
+  curves
+    .command('by-period')
+    .description(
+      'Aggregate a PowerCurve by tariff periods (P1-P6) using a period distribution.\n' +
+      'Returns { p1, p2, p3, p4, p5, p6 } with accumulated kWh per period.\n\n' +
+      'The period distribution maps each hour of each day to a tariff period.\n' +
+      'Get it with: suntropy consumption periods --save /tmp/periods.json\n\n' +
+      'Examples:\n' +
+      '  suntropy curves by-period --input /tmp/production.json --periods /tmp/periods.json\n' +
+      '  suntropy curves by-period --input /tmp/consumption.json --periods /tmp/periods.json'
+    )
+    .requiredOption('--periods <file>', 'Period distribution file (DayCurve[] from consumption periods)')
+    .option('--input <file>', 'Input PowerCurve file (or stdin)')
+    .action(async (opts) => {
+      try {
+        const data = await readCurveInput(opts.input);
+        const pc = await buildCurve(data, 'by-period');
+        const periodsData = JSON.parse(readFileSync(opts.periods, 'utf-8'));
+        const result = pc.aggregateByPeriod(periodsData);
+        output(result, getGlobalOpts(curves));
+      } catch (err) {
+        outputError(err);
+      }
+    });
 }

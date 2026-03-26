@@ -21,6 +21,10 @@ export interface ResourceConfig {
   putBodyOnly?: boolean;
   /** Backend service */
   service?: 'solar' | 'templates' | 'security';
+  /** Custom GET path pattern. Use ':id' as placeholder (e.g. '/custom-asset/id/:id') */
+  getPath?: string;
+  /** Use POST filter to get by ID (when no GET :id endpoint exists) */
+  getViaFilter?: boolean;
 }
 
 function getGlobalOpts(cmd: Command): OutputOptions & { server?: string; token?: string; profile?: string; verbose?: boolean } {
@@ -101,8 +105,19 @@ export function createResourceCommands(cfg: ResourceConfig): Command {
       try {
         const global = getGlobalOpts(cmd);
         const client = createServiceClient(service, global);
-        const res = await client.get(`${cfg.basePath}/${id}`);
-        output(res.data, global);
+        if (cfg.getViaFilter) {
+          // No GET :id endpoint — fetch all and filter client-side
+          const res = await client.get(cfg.basePath, { params: { unactive: true } });
+          const all = Array.isArray(res.data) ? res.data : (Array.isArray(res.data?.[0]) ? res.data[0] : res.data?.data || []);
+          const idNum = parseInt(id);
+          const item = all.find((r: Record<string, unknown>) => r[cfg.idField] === idNum || r[cfg.idField] === id);
+          if (!item) { outputError(new Error(`${cfg.singular} with ${cfg.idField}=${id} not found`)); return; }
+          output(item, global);
+        } else {
+          const url = cfg.getPath ? cfg.getPath.replace(':id', id) : `${cfg.basePath}/${id}`;
+          const res = await client.get(url);
+          output(res.data, global);
+        }
       } catch (err) {
         outputError(handleApiError(err));
       }

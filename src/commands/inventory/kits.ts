@@ -27,6 +27,7 @@ export function registerKitsCommands(inventory: Command): void {
     listFields: ['identifier', 'peakPower', 'panelNumber', 'inverterNumber', 'price', 'totalPrice', 'phaseNumber', 'active'],
     filterPath: '/solar-kits/filters',
     batchDeletePath: 'delete-batch-solar-kits',
+    getViaFilter: true,
   });
 
   // --- archive ---
@@ -262,5 +263,77 @@ export function registerKitsCommands(inventory: Command): void {
       }
     });
 
+  // --- assemble: create kit from existing components by ID ---
+  kits
+    .command('assemble')
+    .description(
+      'Assemble a solar kit from existing components by ID.\n' +
+      'References kit panels, inverters, batteries, and custom assets by their IDs.\n\n' +
+      'Custom assets format: --custom-asset <assetId>:<units> (repeatable)\n\n' +
+      'Examples:\n' +
+      '  suntropy inventory kits assemble --name "Kit 5kW" --panel 123 --inverter 456 --panels-count 12 --price 6500\n' +
+      '  suntropy inventory kits assemble --name "Kit Premium" --panel 123 --inverter 456 --battery 789 \\\n' +
+      '    --panels-count 12 --inverters-count 1 --batteries-count 1 --peak-power 5.4 --price 8500 \\\n' +
+      '    --custom-asset 100:12 --custom-asset 200:1 --phase single_phase'
+    )
+    .requiredOption('--name <identifier>', 'Kit name/identifier')
+    .option('--panel <kitPanelId>', 'Kit panel ID (idKitSolarPanel)')
+    .option('--inverter <kitInverterId>', 'Kit inverter ID (idKitInverter)')
+    .option('--battery <batteryId>', 'Battery ID from inventory (batteryId)')
+    .option('--panels-count <n>', 'Number of panels', '12')
+    .option('--inverters-count <n>', 'Number of inverters', '1')
+    .option('--batteries-count <n>', 'Number of batteries', '0')
+    .option('--peak-power <kW>', 'Total peak power in kW')
+    .option('--price <eur>', 'Kit price in EUR')
+    .option('--phase <type>', 'Phase: single_phase or three_phase', 'single_phase')
+    .option('--coplanar', 'Coplanar mounting')
+    .option('--taxes <pct>', 'Default tax percentage', '21')
+    .option('--custom-asset <id:units>', 'Custom asset as id:units (repeatable)', collectCustomAssets, [])
+    .action(async (opts) => {
+      try {
+        const global = getGlobalOpts(kits);
+        const client = createServiceClient('solar', global);
+
+        const body: Record<string, unknown> = {
+          identifier: opts.name,
+          panelNumber: parseInt(opts.panelsCount),
+          inverterNumber: parseInt(opts.invertersCount),
+          batteriesNumber: parseInt(opts.batteriesCount),
+          phaseNumber: opts.phase,
+          defaultTaxesPercentage: parseFloat(opts.taxes),
+          active: true,
+        };
+
+        if (opts.panel) body.kitSolarPanel = { idKitSolarPanel: parseInt(opts.panel) };
+        if (opts.inverter) body.kitInverter = { idKitInverter: parseInt(opts.inverter) };
+        if (opts.battery) body.battery = { batteryId: parseInt(opts.battery) };
+        if (opts.peakPower) body.peakPower = parseFloat(opts.peakPower);
+        if (opts.price) body.price = parseFloat(opts.price);
+        if (opts.coplanar) body.coplanar = true;
+
+        // Parse custom assets: [{id, units}, ...]
+        if (opts.customAsset && opts.customAsset.length > 0) {
+          body.solarKitCustomAssets = opts.customAsset.map((ca: { id: number; units: number }) => ({
+            customAsset: { idCustomAsset: ca.id },
+            units: ca.units,
+          }));
+        }
+
+        const res = await client.post('/solar-kits', body);
+        output(res.data, global);
+      } catch (err) {
+        outputError(handleApiError(err));
+      }
+    });
+
   inventory.addCommand(kits);
+}
+
+/** Collector for repeatable --custom-asset <id:units> option */
+function collectCustomAssets(value: string, previous: { id: number; units: number }[]): { id: number; units: number }[] {
+  const [idStr, unitsStr] = value.split(':');
+  const id = parseInt(idStr);
+  const units = unitsStr ? parseInt(unitsStr) : 1;
+  if (isNaN(id)) throw new Error(`Invalid custom asset format: "${value}". Use <id>:<units> (e.g. 100:12)`);
+  return [...previous, { id, units }];
 }

@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { createServiceClient, handleApiError } from '../../client.js';
 import { output, outputError, outputPaginated, type OutputOptions } from '../../output.js';
+import { registerStudyBuilderCommands } from './builder.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
   let root = cmd;
@@ -323,4 +324,7 @@ export function registerStudiesCommands(program: Command): void {
         outputError(handleApiError(err));
       }
     });
+
+  // Register study builder commands (init, validate, save, pull, set, add, remove, calculate)
+  registerStudyBuilderCommands(studies);
 }
