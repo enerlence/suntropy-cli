@@ -1,15 +1,20 @@
 {
-  "name": "suntropy-cli",
+  "name": "@enerlence/suntropy-cli",
   "version": "0.1.0",
   "description": "Agent-first CLI for Suntropy solar platform",
   "type": "module",
   "bin": {
     "suntropy": "./dist/bin/suntropy.js"
   },
+  "files": [
+    "dist",
+    "skills"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsx bin/suntropy.ts",
-    "start": "node dist/bin/suntropy.js"
+    "start": "node dist/bin/suntropy.js",
+    "prepublishOnly": "npm run build"
   },
   "keywords": ["suntropy", "solar", "cli", "agent"],
   "license": "UNLICENSED",
