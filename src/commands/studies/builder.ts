@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { v4 } from 'uuid';
 import { createServiceClient, handleApiError } from '../../client.js';
+import { loadConfig, getActiveProfile } from '../../config.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
 // ─── Types ───
@@ -422,6 +423,13 @@ export function registerStudyBuilderCommands(studies: Command): void {
         const progress = study.solarStudyProgress as SolarStudyProgress;
         progress.stepsProgress = stepsProgress;
         progress.lastStateUpdateMomentMS = Date.now();
+
+        // Auto-add comment like frontend SaveStudyModal
+        const isEditing = progress.editingSolarStudy || !!study._id;
+        const comments = (study.comments || []) as Record<string, unknown>[];
+        const commentType = opts.saveAsNew ? 'duplicated' : (isEditing ? 'modified' : 'created');
+        comments.push(createComment(commentType));
+        study.comments = comments;
 
         if (opts.saveAsNew) {
           delete study._id;
@@ -1232,13 +1240,15 @@ export function registerStudyBuilderCommands(studies: Command): void {
   studies
     .command('calculate-results')
     .description(
-      'Calculate energy results (net consumption, excesses, savings) from consumption + production.\n' +
-      'Uses energy-types PowerCurve operations locally.\n' +
+      'Calculate energy results replicating frontend SolarResultCalculator.\n' +
+      'Computes: net consumption, excesses, spending/savings by period, coverage.\n' +
+      'Requires: consumption, production, energyPrices, atrTariff.\n' +
       'Example: suntropy studies calculate-results --file study.json'
     )
     .option('--file <path>', 'Study file path')
     .action(async (opts) => {
       try {
+        const global = getGlobalOpts(studies);
         const filePath = resolveFile(opts);
         const study = readStudy(filePath);
 
@@ -1248,10 +1258,15 @@ export function registerStudyBuilderCommands(studies: Command): void {
           return;
         }
 
-        // Get total production from all surfaces
         const surfaces = study.surfaces as Record<string, unknown>[] | undefined;
         if (!surfaces?.length) {
           outputError(new Error('No surfaces. Use: studies add surface'));
+          return;
+        }
+
+        const energyPrices = study.energyPrices as ByPeriodValues | undefined;
+        if (!energyPrices) {
+          outputError(new Error('No energy prices. Use: studies set prices'));
           return;
         }
 
@@ -1260,17 +1275,13 @@ export function registerStudyBuilderCommands(studies: Command): void {
         // Build consumption PowerCurve
         const consCurve = new PowerCurve(consumption.days, false, consumption.identifier || 'consumption', false);
 
-        // Aggregate production from all surfaces
+        // Aggregate production from all surfaces (replicates SolarResultCalculator.aggregateProductionResults)
         let totalProdCurve: InstanceType<typeof PowerCurve> | null = null;
         for (const surf of surfaces) {
           const prod = surf.production as { days?: unknown[]; identifier?: string } | undefined;
           if (prod?.days?.length) {
             const surfProd = new PowerCurve(prod.days, false, prod.identifier || 'production', false);
-            if (!totalProdCurve) {
-              totalProdCurve = surfProd;
-            } else {
-              totalProdCurve = totalProdCurve.aggregatePowerCurve(surfProd);
-            }
+            totalProdCurve = totalProdCurve ? totalProdCurve.aggregatePowerCurve(surfProd) : surfProd;
           }
         }
 
@@ -1279,51 +1290,243 @@ export function registerStudyBuilderCommands(studies: Command): void {
           return;
         }
 
-        // Net consumption = consumption - production (negative values = excesses)
-        const prodNeg = totalProdCurve.applyMultiplier(-1);
-        const netRaw = consCurve.aggregatePowerCurve(prodNeg);
+        const results: Record<string, unknown> = {};
 
-        // Excesses = positive part of (production - consumption)
-        const consNeg = consCurve.applyMultiplier(-1);
-        const excessesRaw = totalProdCurve.aggregatePowerCurve(consNeg);
-        const excessesCurve = excessesRaw.filterPositiveValues();
+        // --- Core energy calculations (always computed) ---
 
-        // Net consumption = positive part of (consumption - production)
-        const netConsumption = netRaw.filterPositiveValues();
+        // Net consumption = consumption - production
+        const netConsumptionCurve = consCurve.aggregatePowerCurve(totalProdCurve.applyMultiplier(-1));
+        results.netConsumption = netConsumptionCurve;
 
-        const totalProduction = totalProdCurve.getTotalAcumulate();
-        const totalConsumption = consCurve.getTotalAcumulate();
-        const totalExcesses = excessesCurve.getTotalAcumulate();
-        const totalConsumptionCoverage = totalConsumption > 0 ? totalProduction / totalConsumption : 0;
+        // Total production
+        results.totalProduction = totalProdCurve.getTotalAcumulate();
 
-        // Calculate savings by period if possible
-        const energyPrices = study.energyPrices as ByPeriodValues | undefined;
-        let totalSavings: number | undefined;
-        if (energyPrices?.p1) {
-          // Simple savings estimate: self-consumed energy * average price
-          const selfConsumed = totalProduction - totalExcesses;
-          const avgPrice = Object.values(energyPrices)
+        // Consumption coverage percentage
+        results.totalConsumptionCoverage =
+          ((results.totalProduction as number) / consCurve.getTotalAcumulate()) * 100;
+
+        // --- Period-based economic calculations (replicates SolarResultCalculator.calculateResults) ---
+        const periodDistribution = await fetchPeriodDistribution(study, global);
+
+        if (periodDistribution) {
+          const clientDetails = study.clientDetails as Record<string, unknown> | undefined;
+          const market = study.market as string | undefined;
+          const oneBaseEnergyDiscountFactor = 1 - ((study.energyPricesDiscount as number) || 0) / 100;
+          const oneBasePowerDiscountFactor = 1 - ((study.powerPricesDiscount as number) || 0) / 100;
+
+          // Positive net consumption (filter out negatives = energy still needed from grid)
+          const positiveNetConsumptionCurve = netConsumptionCurve.filterNegativeValues();
+          const positiveNetByPeriod = positiveNetConsumptionCurve.aggregateByPeriod(periodDistribution);
+          const rawConsumptionByPeriod = consCurve.aggregateByPeriod(periodDistribution);
+
+          // Contracted power costs (if useAlternativePrices)
+          const contractedPower = (study.contractedPower || {}) as ByPeriodValues;
+          const powerPrices = (study.powerPrices || {}) as ByPeriodValues;
+          const contractedPowerRawCostByPeriod: ByPeriodValues = {};
+          if (study.useAlternativePrices) {
+            for (let i = 1; i <= 6; i++) {
+              const p = `p${i}`;
+              if (contractedPower[p] && powerPrices[p]) {
+                contractedPowerRawCostByPeriod[p] =
+                  (contractedPower[p] as number) * 365 * (powerPrices[p] as number) * oneBasePowerDiscountFactor;
+              }
+            }
+          }
+
+          // PT market peak cost
+          if (market === 'pt') {
+            const extraCostPrice = (study.extraCostPrice || {}) as ByPeriodValues;
+            let numberOfP1hours = 0;
+            periodDistribution.forEach((day: any) => {
+              Object.values(day.valuesList).forEach((hour: any) => {
+                if (hour === 1) numberOfP1hours++;
+              });
+            });
+            const coefficient =
+              (1 / numberOfP1hours) * ((extraCostPrice.p1 as number) || 0) * netConsumptionCurve.days.length;
+            results.rawPeakConsumptionCostPt = ((rawConsumptionByPeriod as any)?.p1 || 0) * coefficient;
+            results.netPeakConsumptionCostPt = ((positiveNetByPeriod as any)?.p1 || 0) * coefficient;
+          }
+
+          // Raw spending by period
+          const totalRawSpendingByPeriod: ByPeriodValues = {};
+          for (let i = 1; i <= 6; i++) {
+            const p = `p${i}`;
+            const rawConsP = (rawConsumptionByPeriod as any)?.[p] || 0;
+            const priceP = (energyPrices[p] as number) || 0;
+            const includeTaxes = clientDetails?.includeTaxes;
+            const taxPct = (clientDetails?.taxesPercentage as number) || 0;
+            const priceWithTax = includeTaxes && taxPct ? priceP * (1 + taxPct / 100) : priceP;
+            totalRawSpendingByPeriod[p] =
+              rawConsP * priceWithTax * oneBaseEnergyDiscountFactor +
+              ((contractedPowerRawCostByPeriod[p] as number) || 0);
+          }
+          results.totalRawSpendingByPeriod = totalRawSpendingByPeriod;
+
+          // Total raw spending
+          results.totalRawSpending =
+            Object.values(totalRawSpendingByPeriod)
+              .filter((v): v is number => typeof v === 'number')
+              .reduce((a, b) => a + b, 0) + ((results.rawPeakConsumptionCostPt as number) || 0);
+
+          // Net spending by period + alternative prices
+          const alternativeEnergyPrices = (study.alternativeEnergyPrices || {}) as ByPeriodValues;
+          const alternativePowerPrices = (study.alternativePowerPrices || {}) as ByPeriodValues;
+          const contractedPowerFinalCostByPeriod: ByPeriodValues = {};
+          const contractedPowerSavingsByPeriod: ByPeriodValues = {};
+
+          if (study.useAlternativePrices) {
+            for (let i = 1; i <= 6; i++) {
+              const p = `p${i}`;
+              if (contractedPower[p] && alternativePowerPrices[p]) {
+                contractedPowerFinalCostByPeriod[p] =
+                  (contractedPower[p] as number) * 365 * (alternativePowerPrices[p] as number);
+              }
+              if (contractedPower[p] && powerPrices[p] && alternativePowerPrices[p]) {
+                contractedPowerSavingsByPeriod[p] =
+                  (contractedPower[p] as number) * 365 * (powerPrices[p] as number) * oneBasePowerDiscountFactor -
+                  (contractedPower[p] as number) * 365 * (alternativePowerPrices[p] as number) * oneBasePowerDiscountFactor;
+              }
+            }
+            results.contractedPowerSavingsByPeriod = contractedPowerSavingsByPeriod;
+          }
+
+          const totalNetSpendingByPeriod: ByPeriodValues = {};
+          const alternativeTotalNetSpendingByPeriod: ByPeriodValues = {};
+
+          for (let i = 1; i <= 6; i++) {
+            const p = `p${i}`;
+            const posNetP = (positiveNetByPeriod as any)?.[p] || 0;
+            const priceP = (energyPrices[p] as number) || 0;
+            const altPriceP = (alternativeEnergyPrices[p] as number) || 0;
+            const includeTaxes = clientDetails?.includeTaxes;
+            const taxPct = (clientDetails?.taxesPercentage as number) || 0;
+
+            totalNetSpendingByPeriod[p] =
+              posNetP * (includeTaxes ? priceP * (1 + taxPct / 100) : priceP) * oneBaseEnergyDiscountFactor;
+
+            if (study.alternativeEnergyPrices) {
+              alternativeTotalNetSpendingByPeriod[p] =
+                posNetP * altPriceP + ((contractedPowerFinalCostByPeriod[p] as number) || 0);
+            }
+          }
+          results.totalNetSpendingByPeriod = totalNetSpendingByPeriod;
+          if (study.alternativeEnergyPrices) {
+            results.alternativeTotalNetSpendingByPeriod = alternativeTotalNetSpendingByPeriod;
+          }
+
+          // Total net spending
+          results.totalNetSpending =
+            Object.values(totalNetSpendingByPeriod)
+              .filter((v): v is number => typeof v === 'number')
+              .reduce((a, b) => a + b, 0) + ((results.netPeakConsumptionCostPt as number) || 0);
+
+          // Savings by period = raw - net
+          const totalSavingsByPeriod: ByPeriodValues = {};
+          for (let i = 1; i <= 6; i++) {
+            const p = `p${i}`;
+            totalSavingsByPeriod[p] =
+              ((totalRawSpendingByPeriod[p] as number) || 0) - ((totalNetSpendingByPeriod[p] as number) || 0);
+          }
+          results.totalSavingsByPeriod = totalSavingsByPeriod;
+
+          // Alternative savings by period
+          if (study.alternativeEnergyPrices) {
+            const altSavings: ByPeriodValues = {};
+            for (let i = 1; i <= 6; i++) {
+              const p = `p${i}`;
+              altSavings[p] =
+                ((totalRawSpendingByPeriod[p] as number) || 0) -
+                ((alternativeTotalNetSpendingByPeriod[p] as number) || 0);
+            }
+            results.totalSavingsByPeriodAlternativeSavings = altSavings;
+          }
+
+          // Total savings
+          results.totalSavings =
+            Object.values(totalSavingsByPeriod)
+              .filter((v): v is number => typeof v === 'number')
+              .reduce((a, b) => a + b, 0) +
+            (((results.rawPeakConsumptionCostPt as number) || 0) -
+              ((results.netPeakConsumptionCostPt as number) || 0));
+
+          // Total savings with alternative prices
+          if (study.alternativeEnergyPrices) {
+            results.totalSavingsAlternativePrices =
+              Object.values(alternativeTotalNetSpendingByPeriod)
+                .filter((v): v is number => typeof v === 'number')
+                .reduce((a, b) => a + b, 0) +
+              (((results.rawPeakConsumptionCostPt as number) || 0) -
+                ((results.netPeakConsumptionCostPt as number) || 0));
+          }
+
+          // Excesses curve = (production - consumption), keep positive
+          const excessesCurve = totalProdCurve
+            .aggregatePowerCurve(consCurve.applyMultiplier(-1))
+            .filterNegativeValues();
+          results.excessesCurve = excessesCurve;
+
+          // Excesses by period
+          results.totalExcessesByPeriod = excessesCurve.aggregateByPeriod(periodDistribution);
+          results.totalExcesses = Object.values(results.totalExcessesByPeriod as ByPeriodValues)
             .filter((v): v is number => typeof v === 'number')
-            .reduce((a, b) => a + b, 0) / Object.values(energyPrices).filter((v) => typeof v === 'number').length;
-          totalSavings = selfConsumed * avgPrice;
+            .reduce((a, b) => a + b, 0);
         }
-
-        const results: Record<string, unknown> = {
-          totalProduction,
-          totalConsumptionCoverage,
-          totalExcesses,
-          netConsumption: { days: netConsumption.days, identifier: 'netConsumption' },
-          excessesCurve: { days: excessesCurve.days, identifier: 'excesses' },
-        };
-        if (totalSavings !== undefined) results.totalSavings = totalSavings;
 
         const result = updateStudy(filePath, (s) => {
           s.results = results;
           return undefined;
         });
+        output(result, global);
+      } catch (err) {
+        outputError(handleApiError(err));
+      }
+    });
+
+  // ═══════════════════════════════════════════
+  //  COMMENTS
+  // ═══════════════════════════════════════════
+
+  // --- add comment (local study file) ---
+  studies
+    .command('add-comment')
+    .description(
+      'Add a comment to the local study file.\n' +
+      'Example: suntropy studies add-comment --file study.json --content "Panel layout reviewed"'
+    )
+    .option('--file <path>', 'Study file path')
+    .requiredOption('--content <text>', 'Comment text')
+    .action(async (opts) => {
+      try {
+        const result = updateStudy(resolveFile(opts), (study) => {
+          const comments = (study.comments || []) as Record<string, unknown>[];
+          comments.push(createComment('commented', opts.content));
+          study.comments = comments;
+          return undefined;
+        });
         output(result, getGlobalOpts(studies));
       } catch (err) {
         outputError(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+
+  // --- comment (API — add to existing study in backend) ---
+  studies
+    .command('comment <studyId>')
+    .description(
+      'Add a comment to an existing study via API.\n' +
+      'Example: suntropy studies comment abc123 --content "Revisado por agente"'
+    )
+    .requiredOption('--content <text>', 'Comment text')
+    .action(async (studyId, opts) => {
+      try {
+        const global = getGlobalOpts(studies);
+        const client = createServiceClient('solar', global);
+        const comment = createComment('commented', opts.content);
+        const res = await client.post(`/solar-study/addSolarStudyComment/${studyId}`, comment);
+        output(res.data, global);
+      } catch (err) {
+        outputError(handleApiError(err));
       }
     });
 }
@@ -1425,4 +1628,53 @@ function collectAssets(value: string, previous: { id: number; quantity: number }
   const quantity = qtyStr ? parseInt(qtyStr) : 1;
   if (isNaN(id)) throw new Error(`Invalid asset format: "${value}". Use <id>:<quantity>`);
   return [...previous, { id, quantity }];
+}
+
+/** Fetch period distribution from periods service (needed for economic calculations) */
+async function fetchPeriodDistribution(
+  study: Study,
+  global: OutputOptions & Record<string, unknown>,
+): Promise<unknown[] | null> {
+  const atrTariff = study.atrTariff as Record<string, unknown> | undefined;
+  const geoZone = study.geographicalZone as Record<string, unknown> | undefined;
+  if (!atrTariff) return null;
+
+  const tariffId = atrTariff.idTarifaATR as number;
+  const zoneId = (geoZone?.idZona as number) || 1;
+  const market = (study.market as string) || 'es';
+  const year = new Date().getFullYear();
+
+  try {
+    const periodsClient = createServiceClient('periods', global);
+    const res = await periodsClient.get('/periodos', {
+      params: {
+        idTarifa: tariffId,
+        idZona: zoneId,
+        fechaInicio: `${year}-01-01`,
+        fechaFin: `${year}-12-31`,
+        market,
+      },
+    });
+    const data = res.data;
+    if (Array.isArray(data) && data.length > 0) return data;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Create a study comment (replicates frontend createNewComment) */
+function createComment(type: string, content?: string): Record<string, unknown> {
+  const config = loadConfig();
+  const profile = getActiveProfile(config);
+  const autoContent: Record<string, string> = {
+    created: 'Estudio creado via CLI',
+    modified: 'Estudio actualizado via CLI',
+  };
+  return {
+    content: content || autoContent[type] || '',
+    type,
+    creationTimestamp: new Date().toISOString(),
+    creationUserUID: profile.userUID || 'cli-agent',
+  };
 }
