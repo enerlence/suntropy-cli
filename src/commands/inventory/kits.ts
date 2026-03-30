@@ -30,6 +30,32 @@ export function registerKitsCommands(inventory: Command): void {
     getViaFilter: true,
   });
 
+  // Override create description with correct field names to prevent agent hallucination
+  const kitsCreate = kits.commands.find((c: Command) => c.name() === 'create');
+  if (kitsCreate) {
+    kitsCreate.description(
+      'Create a solar kit via raw JSON. Prefer "assemble" for guided creation.\n\n' +
+      'Required fields:\n' +
+      '  identifier (string)     — Kit name (NOT "name")\n' +
+      '  price (number)          — Kit price in EUR\n' +
+      '  panelNumber (number)    — Number of panels\n' +
+      '  inverterNumber (number) — Number of inverters\n' +
+      '  phaseNumber (string)    — "single_phase" or "three_phase"\n\n' +
+      'Component relations (use kit-specific IDs, NOT inventory IDs):\n' +
+      '  kitSolarPanel: {"idKitSolarPanel": <id>}  — from "kits panels list/create"\n' +
+      '  kitInverter: {"idKitInverter": <id>}      — from "kits inverters list/create"\n' +
+      '  battery: {"batteryId": <id>}               — from "inventory batteries list"\n\n' +
+      'Optional fields:\n' +
+      '  peakPower, coplanar, defaultTaxesPercentage, active, batteriesNumber,\n' +
+      '  useTotalKitCostAsPrice, manufacturingWarranty, materialsWarranty,\n' +
+      '  imageUrl, referenceId, buyUrl\n\n' +
+      'Custom assets array:\n' +
+      '  solarKitCustomAssets: [{"customAsset": {"idCustomAsset": <id>}, "units": <n>}]\n\n' +
+      'Example:\n' +
+      '  suntropy inventory kits create --data \'{"identifier":"Kit 5kW","kitSolarPanel":{"idKitSolarPanel":123},"kitInverter":{"idKitInverter":456},"panelNumber":12,"inverterNumber":1,"peakPower":5.4,"price":6500,"phaseNumber":"single_phase"}\''
+    );
+  }
+
   // --- archive ---
   kits
     .command('archive <kitId>')
@@ -284,7 +310,7 @@ export function registerKitsCommands(inventory: Command): void {
     .option('--inverters-count <n>', 'Number of inverters', '1')
     .option('--batteries-count <n>', 'Number of batteries', '0')
     .option('--peak-power <kW>', 'Total peak power in kW')
-    .option('--price <eur>', 'Kit price in EUR')
+    .requiredOption('--price <eur>', 'Kit price in EUR (required)')
     .option('--phase <type>', 'Phase: single_phase or three_phase', 'single_phase')
     .option('--coplanar', 'Coplanar mounting')
     .option('--taxes <pct>', 'Default tax percentage', '21')
@@ -293,6 +319,85 @@ export function registerKitsCommands(inventory: Command): void {
       try {
         const global = getGlobalOpts(kits);
         const client = createServiceClient('solar', global);
+
+        // Validate component IDs exist as kit entities before assembling
+        const validationErrors: string[] = [];
+
+        if (opts.panel) {
+          try {
+            const res = await client.post('/solar-kits/solar-panels/filter', { idKitSolarPanel: parseInt(opts.panel) });
+            const data = Array.isArray(res.data) ? res.data : res.data?.data || [];
+            if (data.length === 0) {
+              validationErrors.push(
+                `Panel ID ${opts.panel} is not a KitSolarPanel. ` +
+                `Use "suntropy inventory kits panels list" to see available kit panels, ` +
+                `or "suntropy inventory kits panels create --data '{...}'" to create one first.`
+              );
+            }
+          } catch {
+            validationErrors.push(
+              `Could not validate panel ID ${opts.panel}. ` +
+              `Make sure it is a KitSolarPanel ID (not a regular inventory panel). ` +
+              `Use "suntropy inventory kits panels list" to see available kit panels.`
+            );
+          }
+        }
+
+        if (opts.inverter) {
+          try {
+            const res = await client.get('/solar-kits/inverters', { params: { limit: 200 } });
+            const inverters = Array.isArray(res.data) ? res.data : res.data?.data || [];
+            const found = inverters.find((inv: Record<string, unknown>) =>
+              String(inv.idKitInverter) === String(opts.inverter)
+            );
+            if (!found) {
+              validationErrors.push(
+                `Inverter ID ${opts.inverter} is not a KitInverter. ` +
+                `Use "suntropy inventory kits inverters list" to see available kit inverters, ` +
+                `or "suntropy inventory kits inverters create --data '{...}'" to create one first.`
+              );
+            }
+          } catch {
+            validationErrors.push(
+              `Could not validate inverter ID ${opts.inverter}. ` +
+              `Make sure it is a KitInverter ID (not a regular inventory inverter). ` +
+              `Use "suntropy inventory kits inverters list" to see available kit inverters.`
+            );
+          }
+        }
+
+        if (opts.battery) {
+          try {
+            const res = await client.get('/solar-kits/batteries', { params: { limit: 200 } });
+            const batteries = Array.isArray(res.data) ? res.data : res.data?.data || [];
+            const found = batteries.find((bat: Record<string, unknown>) =>
+              String(bat.idKitBattery) === String(opts.battery)
+            );
+            if (!found) {
+              validationErrors.push(
+                `Battery ID ${opts.battery} is not a KitBattery. ` +
+                `Use "suntropy inventory kits batteries list" to see available kit batteries, ` +
+                `or "suntropy inventory kits batteries create --data '{...}'" to create one first.`
+              );
+            }
+          } catch {
+            validationErrors.push(
+              `Could not validate battery ID ${opts.battery}. ` +
+              `Make sure it is a KitBattery ID (not a regular inventory battery). ` +
+              `Use "suntropy inventory kits batteries list" to see available kit batteries.`
+            );
+          }
+        }
+
+        if (validationErrors.length > 0) {
+          outputError({
+            error: true,
+            message: 'Kit assembly validation failed',
+            issues: validationErrors,
+            hint: 'The assemble command requires KitSolarPanel, KitInverter, and KitBattery IDs — these are kit-specific entities, not regular inventory items.',
+          });
+          return;
+        }
 
         const body: Record<string, unknown> = {
           identifier: opts.name,
@@ -308,10 +413,9 @@ export function registerKitsCommands(inventory: Command): void {
         if (opts.inverter) body.kitInverter = { idKitInverter: parseInt(opts.inverter) };
         if (opts.battery) body.battery = { batteryId: parseInt(opts.battery) };
         if (opts.peakPower) body.peakPower = parseFloat(opts.peakPower);
-        if (opts.price) body.price = parseFloat(opts.price);
+        body.price = parseFloat(opts.price);
         if (opts.coplanar) body.coplanar = true;
 
-        // Parse custom assets: [{id, units}, ...]
         if (opts.customAsset && opts.customAsset.length > 0) {
           body.solarKitCustomAssets = opts.customAsset.map((ca: { id: number; units: number }) => ({
             customAsset: { idCustomAsset: ca.id },
