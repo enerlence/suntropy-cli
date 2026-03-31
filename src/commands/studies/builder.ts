@@ -1270,7 +1270,7 @@ export function registerStudyBuilderCommands(studies: Command): void {
           return;
         }
 
-        const { PowerCurve } = await import('energy-types/lib/energy/classes/powerCurve.class');
+        const { PowerCurve } = await import('energy-types/lib/energy/classes/powerCurve.class.js');
 
         // Build consumption PowerCurve
         const consCurve = new PowerCurve(consumption.days, false, consumption.identifier || 'consumption', false);

@@ -32,7 +32,7 @@ async function readCurveInput(inputPath?: string): Promise<any> {
 
 /** Build a PowerCurve from parsed JSON data */
 async function buildCurve(data: any, identifier = 'curve') {
-  const { PowerCurve } = await import('energy-types/lib/energy/classes/powerCurve.class');
+  const { PowerCurve } = await import('energy-types/lib/energy/classes/powerCurve.class.js');
   // Data might be: { days: [...], identifier } or just a DayCurve[]
   if (Array.isArray(data)) {
     return new PowerCurve(data, false, identifier, false);

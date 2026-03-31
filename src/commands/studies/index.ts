@@ -236,7 +236,7 @@ export function registerStudiesCommands(program: Command): void {
         }
 
         // Import PowerCurve from energy-types
-        const { PowerCurve } = await import('energy-types/lib/energy/classes/powerCurve.class');
+        const { PowerCurve } = await import('energy-types/lib/energy/classes/powerCurve.class.js');
         const cd = curveData as any;
         const pc = new PowerCurve(cd.days || cd, cd.ignore0 ?? false, cd.identifier || curveName, cd.parseDate ?? false);
 
