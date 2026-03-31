@@ -140,14 +140,17 @@ suntropy inventory panels delete <id>
 #   kits, charger-kits, heatpump-kits, manufacturers
 ```
 
-**Kit assembly:**
+**Kit assembly (create kit components first, then assemble):**
 
 ```bash
-suntropy inventory kits panels create --data '{"name":"Panel Kit","peakPower":450}'
-suntropy inventory kits inverters create --data '{"name":"Inversor Kit","nominalPower":5000}'
+# 1. Create kit-specific panel and inverter
+suntropy inventory kits panels create --data '{"name":"Panel Kit 450W","peakPower":450}'
+suntropy inventory kits inverters create --data '{"name":"Inversor Kit 5kW","nominalPower":5000}'
+
+# 2. Assemble kit referencing component IDs
 suntropy inventory kits assemble \
   --name "Kit Solar 5kW" \
-  --panel <panelId> --inverter <inverterId> \
+  --panel <kitPanelId> --inverter <kitInverterId> \
   --panels-count 12 --peak-power 5.4 --price 3500
 ```
 

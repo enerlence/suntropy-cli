@@ -120,31 +120,13 @@ suntropy inventory kits assemble \
   --custom-asset 2281:12 --custom-asset 2282:1
 ```
 
-### Alternativa: Crear con JSON completo
-
-Para campos avanzados (garantías, useTotalKitCostAsPrice, etc.) usa `create --data`:
+For advanced fields (warranties, useTotalKitCostAsPrice, etc.) use `update` after assembling:
 
 ```bash
-suntropy inventory kits create --data '{
-  "identifier": "Kit Solar Premium 5kW",
-  "kitSolarPanel": {"idKitSolarPanel": <panelId>},
-  "kitInverter": {"idKitInverter": <inverterId>},
-  "battery": {"batteryId": <batteryId>},
-  "panelNumber": 12,
-  "inverterNumber": 1,
-  "peakPower": 5.4,
-  "price": 6500,
-  "phaseNumber": "single_phase",
-  "coplanar": true,
-  "defaultTaxesPercentage": 21,
+suntropy inventory kits update <kitId> --data '{
   "manufacturingWarranty": 10,
   "materialsWarranty": 5,
-  "useTotalKitCostAsPrice": false,
-  "active": true,
-  "solarKitCustomAssets": [
-    {"customAsset": {"idCustomAsset": <assetId1>}, "units": 12},
-    {"customAsset": {"idCustomAsset": <assetId2>}, "units": 1}
-  ]
+  "useTotalKitCostAsPrice": false
 }'
 ```
 

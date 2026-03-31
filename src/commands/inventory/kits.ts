@@ -30,31 +30,9 @@ export function registerKitsCommands(inventory: Command): void {
     getViaFilter: true,
   });
 
-  // Override create description with correct field names to prevent agent hallucination
-  const kitsCreate = kits.commands.find((c: Command) => c.name() === 'create');
-  if (kitsCreate) {
-    kitsCreate.description(
-      'Create a solar kit via raw JSON. Prefer "assemble" for guided creation.\n\n' +
-      'Required fields:\n' +
-      '  identifier (string)     — Kit name (NOT "name")\n' +
-      '  price (number)          — Kit price in EUR\n' +
-      '  panelNumber (number)    — Number of panels\n' +
-      '  inverterNumber (number) — Number of inverters\n' +
-      '  phaseNumber (string)    — "single_phase" or "three_phase"\n\n' +
-      'Component relations (use kit-specific IDs, NOT inventory IDs):\n' +
-      '  kitSolarPanel: {"idKitSolarPanel": <id>}  — from "kits panels list/create"\n' +
-      '  kitInverter: {"idKitInverter": <id>}      — from "kits inverters list/create"\n' +
-      '  battery: {"batteryId": <id>}               — from "inventory batteries list"\n\n' +
-      'Optional fields:\n' +
-      '  peakPower, coplanar, defaultTaxesPercentage, active, batteriesNumber,\n' +
-      '  useTotalKitCostAsPrice, manufacturingWarranty, materialsWarranty,\n' +
-      '  imageUrl, referenceId, buyUrl\n\n' +
-      'Custom assets array:\n' +
-      '  solarKitCustomAssets: [{"customAsset": {"idCustomAsset": <id>}, "units": <n>}]\n\n' +
-      'Example:\n' +
-      '  suntropy inventory kits create --data \'{"identifier":"Kit 5kW","kitSolarPanel":{"idKitSolarPanel":123},"kitInverter":{"idKitInverter":456},"panelNumber":12,"inverterNumber":1,"peakPower":5.4,"price":6500,"phaseNumber":"single_phase"}\''
-    );
-  }
+  // Remove factory-generated 'create' — use 'assemble' instead for safe kit creation
+  const kitsCreateIdx = kits.commands.findIndex((c: Command) => c.name() === 'create');
+  if (kitsCreateIdx !== -1) kits.commands.splice(kitsCreateIdx, 1);
 
   // --- archive ---
   kits
