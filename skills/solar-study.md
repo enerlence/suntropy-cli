@@ -130,60 +130,84 @@ Anade comentario indicando el consumo configurado:
 suntropy studies add-comment --file $STUDY_FILE --content "Consumo configurado: <kWh> kWh/ano, patron <patron>"
 ```
 
-### Paso 5: Obtener configuracion optima (si no la proporciono el usuario)
+### Paso 5: Anadir superficie y calcular produccion base
 
-Si el usuario no especifico equipo ni potencia, usar solarform para obtener la configuracion recomendada:
+Primero hay que anadir las superficies y calcular la produccion base (necesaria para la optimizacion):
 
 ```bash
-suntropy solarform simple \
-  --region <region> --sub-region <subregion> \
-  --consumption <kWh> --pattern <patron> \
-  --fields solarKit.peakPower,solarKit.panelNumber,economicResults.totalCost,solarKit.identifier,solarKit.idSolarKit
+# Anadir superficie con coordenadas (power inicial estimado, se ajustara en optimizacion)
+suntropy studies add surface --file $STUDY_FILE \
+  --lat <lat> --lon <lon> \
+  --angle <inclinacion> --azimuth <azimuth> \
+  --power 5000 --panels-count 12
+
+# Calcular produccion para todas las superficies
+suntropy studies calculate production --file $STUDY_FILE --all-surfaces
 ```
 
-O con coordenadas:
+Si se tienen multiples superficies (diferente orientacion/inclinacion):
 ```bash
-suntropy solarform calculate --data '{"center":{"lat":<lat>,"lng":<lon>},"consumptionMode":"consumptionPatterns","locationMode":"locationOnly","consumptionPatternViewMode":"consumptionPattern","selectedConsumptionPattern":"<patron>","consumptionQuantity":<kWh>,"consumptionQuantityIntroductionMode":"monthlyConsumption"}' \
-  --fields solarKit.peakPower,solarKit.panelNumber,economicResults.totalCost,solarKit.idSolarKit
+suntropy studies add surface --file $STUDY_FILE --lat <lat> --lon <lon> --angle 30 --azimuth 180 --power 3000 --identifier "Tejado sur"
+suntropy studies add surface --file $STUDY_FILE --lat <lat> --lon <lon> --angle 15 --azimuth 90 --power 2000 --identifier "Tejado este"
+suntropy studies calculate production --file $STUDY_FILE --all-surfaces
 ```
 
-De aqui extraer: `peakPower`, `panelNumber`, `totalCost`, `idSolarKit`.
+### Paso 6: Configurar equipo y optimizar potencia pico
 
-### Paso 6: Configurar equipo (panel o kit)
+**Opcion A: Modo kit (recomendado) — seleccion automatica del kit optimo:**
 
-**Opcion A: Kit solar (recomendado, modo por defecto):**
+Si el usuario no especifica un kit concreto, usar `optimize-peakpower --use-kits` para evaluar todos los kits del inventario y seleccionar el mas adecuado segun el criterio de optimizacion:
+
+```bash
+# Optimizar seleccionando el kit optimo para cubrir el 100% del consumo
+suntropy studies optimize-peakpower --file $STUDY_FILE --raw-consumption 100 --use-kits --apply
+```
+
+El flag `--apply` escribe automaticamente el kit seleccionado en el estudio.
+
+Si el usuario quiere un kit especifico, puede setearlo manualmente:
 ```bash
 suntropy studies set kit --file $STUDY_FILE --kit-id <idSolarKit>
 ```
 
-**Opcion B: Panel + inversor individuales:**
+**Opcion B: Modo panel — optimizacion de potencia pico:**
+
+Primero setear el panel, luego optimizar:
 ```bash
-suntropy studies set panel --file $STUDY_FILE --panel-id <panelId> --panels-count <N>
-suntropy studies set inverter --file $STUDY_FILE --inverter-id <inverterId>
+suntropy studies set panel --file $STUDY_FILE --panel-id <panelId>
+suntropy studies optimize-peakpower --file $STUDY_FILE --energy-savings 70 --apply
 ```
 
-Si no se conocen los IDs, listar inventario:
+El flag `--apply` actualiza `panelNumber` e `installedPower` en cada superficie del estudio.
+
+**Criterios de optimizacion disponibles:**
+
+| Flag | Descripcion |
+|------|-------------|
+| `--energy-savings <pct>` | % de ahorro energetico objetivo |
+| `--raw-consumption <pct>` | Produccion como % del consumo (100 = cubrir consumo) |
+| `--max-excesses <pct>` | Max % de excedentes sobre produccion |
+| `--max-overproduction-months <n>` | Max meses con sobreproduccion |
+
+Si no se especifica criterio, se usa `--raw-consumption 100` por defecto.
+
+**Restricciones de superficie:** Si las superficies tienen campo `area` (m²), la optimizacion limita automaticamente los paneles al espacio disponible. Sin area, no hay restriccion espacial.
+
+Si no se conocen los IDs de panel/kit, listar inventario:
 ```bash
 suntropy inventory kits list --active-only --fields idSolarKit,identifier,peakPower,price
 suntropy inventory panels list --active-only --fields solarPanelId,name,peakPower,costPerUnit
-suntropy inventory inverters list --active-only --fields idInverter,name,nominalPower
 ```
 
 Anade comentario tras seleccionar equipo:
 ```bash
-suntropy studies add-comment --file $STUDY_FILE --content "Equipo seleccionado: <nombre kit/panel>"
+suntropy studies add-comment --file $STUDY_FILE --content "Equipo optimizado: <modo> — <criterio>"
 ```
 
-### Paso 7: Anadir superficie y calcular produccion
+### Paso 7: Recalcular produccion con la configuracion optimizada
 
+Tras aplicar la optimizacion (que actualiza `installedPower` y `panelNumber`), recalcular produccion:
 ```bash
-# Anadir superficie con coordenadas
-suntropy studies add surface --file $STUDY_FILE \
-  --lat <lat> --lon <lon> \
-  --angle <inclinacion> --azimuth <azimuth> \
-  --power <Wp> --panels-count <N>
-
-# Calcular produccion para todas las superficies
 suntropy studies calculate production --file $STUDY_FILE --all-surfaces
 ```
 

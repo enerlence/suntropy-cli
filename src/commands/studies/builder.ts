@@ -1484,6 +1484,427 @@ export function registerStudyBuilderCommands(studies: Command): void {
     });
 
   // ═══════════════════════════════════════════
+  //  OPTIMIZE PEAK POWER
+  // ═══════════════════════════════════════════
+
+  studies
+    .command('optimize-peakpower')
+    .description(
+      'Optimize peak power based on consumption.\n\n' +
+      'Supports two modes:\n' +
+      '  - Panel mode (default or when solarPanel is set): iterates peak power\n' +
+      '  - Kit mode (when solarKit is set or --use-kits): evaluates available kits\n\n' +
+      'Optimization criteria (pick one):\n' +
+      '  --energy-savings <pct>     Target energy savings percentage\n' +
+      '  --raw-consumption <pct>    Production as percentage of consumption\n' +
+      '  --max-excesses <pct>       Max excesses as percentage of production\n' +
+      '  --max-overproduction-months <n>  Max months with overproduction\n\n' +
+      'Surface constraints:\n' +
+      '  If surfaces have area + panel dimensions, max panels per surface is calculated.\n' +
+      '  Without area, no surface constraint is applied (unlimited space).\n\n' +
+      'Examples:\n' +
+      '  suntropy studies optimize-peakpower --file study.json --energy-savings 70\n' +
+      '  suntropy studies optimize-peakpower --file study.json --raw-consumption 100 --use-kits\n' +
+      '  suntropy studies optimize-peakpower --file study.json --max-excesses 15'
+    )
+    .option('--file <path>', 'Study file path')
+    .option('--energy-savings <pct>', 'Target energy savings %')
+    .option('--raw-consumption <pct>', 'Target production as % of consumption')
+    .option('--max-excesses <pct>', 'Max excesses as % of production')
+    .option('--max-overproduction-months <n>', 'Max months with overproduction')
+    .option('--use-kits', 'Force kit mode (fetch all active kits and select optimal)')
+    .option('--apply', 'Apply the result to the study file (set peakpower/kit, recalculate production)')
+    .action(async (opts) => {
+      try {
+        const global = getGlobalOpts(studies);
+        const filePath = resolveFile(opts);
+        const study = readStudy(filePath);
+
+        // Determine evaluation mode
+        const evaluationMode: Record<string, number> = {};
+        if (opts.energySavings !== undefined) evaluationMode.energyPercentageSavings = parseFloat(opts.energySavings);
+        else if (opts.rawConsumption !== undefined) evaluationMode.rawConsumptionPercentage = parseFloat(opts.rawConsumption);
+        else if (opts.maxExcesses !== undefined) evaluationMode.maxExcessesPercentage = parseFloat(opts.maxExcesses);
+        else if (opts.maxOverproductionMonths !== undefined) evaluationMode.maxNumberOfOverproductionMonths = parseInt(opts.maxOverproductionMonths);
+        else {
+          // Default: 100% raw consumption (match consumption)
+          evaluationMode.rawConsumptionPercentage = 100;
+        }
+
+        // Validate study has consumption and production
+        const surfaces = study.surfaces as Record<string, unknown>[] | undefined;
+        if (!surfaces?.length) {
+          outputError(new Error('No surfaces in study. Use: studies add surface'));
+          return;
+        }
+        const consumptionData = study.consumption as Record<string, unknown> | undefined;
+        if (!consumptionData) {
+          outputError(new Error('No consumption in study. Use: studies set consumption'));
+          return;
+        }
+
+        // Check all surfaces have production
+        const surfacesWithoutProduction = surfaces.filter((s) => !s.production);
+        if (surfacesWithoutProduction.length > 0) {
+          outputError(new Error(`${surfacesWithoutProduction.length} surface(s) without production. Use: studies calculate production --all-surfaces`));
+          return;
+        }
+
+        const { PowerCurve } = await import('energy-types/lib/energy/classes/powerCurve.class.js');
+
+        // Build consumption PowerCurve
+        const cd = consumptionData as any;
+        const consumptionCurve = new PowerCurve(cd.days || cd, cd.ignore0 ?? false, cd.identifier || 'consumption', cd.parseDate ?? false);
+        const totalConsumption = consumptionCurve.getTotalAcumulate();
+
+        // Build base production (1 kWp) for each surface
+        const baseProduction: Record<string, any> = {};
+        for (const surface of surfaces) {
+          const sid = surface.surfaceId as string;
+          const prodData = surface.production as any;
+          const prodCurve = new PowerCurve(prodData.days || prodData, false, sid, false);
+          const installedPower = (surface.installedPower as number) || 5000;
+          // Normalize to 1kWp base
+          baseProduction[sid] = prodCurve.applyMultiplier(1 / (installedPower / 1000));
+        }
+
+        // Determine mode: kit vs panel
+        const useKits = opts.useKits || study.peakPowerIntroductionMode === 'solarKit';
+        const solarClient = createServiceClient('solar', global);
+
+        if (useKits) {
+          // ── KIT MODE ──
+          const phaseNumber = (study.phaseNumber as string) || 'single_phase';
+
+          // Fetch all active kits
+          const kitsRes = await solarClient.get('/solar-kits', { params: { limit: 500 } });
+          let allKits = Array.isArray(kitsRes.data) && Array.isArray(kitsRes.data[0])
+            ? kitsRes.data[0]
+            : (Array.isArray(kitsRes.data) ? kitsRes.data : kitsRes.data?.data || []);
+
+          // Filter by phase
+          allKits = allKits.filter((k: any) => k.phaseNumber === phaseNumber && k.active !== false);
+
+          // Check coplanar compatibility
+          const isCoplanar = surfaces.every((s) => !(s.panelInclination as number));
+          allKits = allKits.filter((k: any) =>
+            isCoplanar === undefined ? true : isCoplanar === (k.coplanar === null ? true : k.coplanar)
+          );
+
+          // Sort by peak power ascending (smallest first)
+          allKits.sort((a: any, b: any) =>
+            (a.panelNumber * (a.kitSolarPanel?.peakPower || 0)) - (b.panelNumber * (b.kitSolarPanel?.peakPower || 0))
+          );
+
+          if (allKits.length === 0) {
+            outputError(new Error('No compatible kits found for current phase/surface configuration'));
+            return;
+          }
+
+          let selectedKit: any = null;
+          let bestApproxKit: any = null;
+          let bestApproxValue = -Infinity;
+          let firstValidKit: any = null;
+          const optimizationLog: Record<number, any> = {};
+
+          for (const kit of allKits) {
+            const kitPanel = kit.kitSolarPanel;
+            if (!kitPanel) continue;
+
+            // Distribute panels across surfaces
+            let remainingPanels = kit.panelNumber || 0;
+            const surfPanelCount: Record<string, number> = {};
+            let fits = true;
+
+            for (const surface of surfaces) {
+              const sid = surface.surfaceId as string;
+              const area = surface.area as number | undefined;
+              let maxPanels: number;
+
+              if (area && kitPanel.width && kitPanel.heigth) {
+                // Calculate max panels from area
+                maxPanels = calculateMaxPanels(
+                  area,
+                  kitPanel,
+                  (surface.availableAreaPercentage as number) || 85,
+                  (surface.panelInclination as number) || 0,
+                  (surface.inclination as number) || 0,
+                  (surface.panelPosition as string) || 'vertical',
+                  ((surface.polygonPath as any)?.[0]?.lat as number) || 37,
+                );
+              } else {
+                // No area constraint — unlimited
+                maxPanels = remainingPanels;
+              }
+
+              const assigned = Math.min(remainingPanels, maxPanels);
+              surfPanelCount[sid] = assigned;
+              remainingPanels -= assigned;
+            }
+
+            if (remainingPanels > 0) continue; // Kit doesn't fit
+
+            if (!firstValidKit) firstValidKit = kit;
+
+            // Calculate production for this kit
+            let totalProd: any = null;
+            for (const surface of surfaces) {
+              const sid = surface.surfaceId as string;
+              const panelCount = surfPanelCount[sid] || 0;
+              const surfPeakPower = (panelCount * kitPanel.peakPower) / 1000;
+              const surfProd = baseProduction[sid].applyMultiplier(surfPeakPower);
+              totalProd = totalProd ? totalProd.aggregatePowerCurve(surfProd) : surfProd;
+            }
+
+            const netConsumption = consumptionCurve.aggregatePowerCurve(totalProd.applyMultiplier(-1));
+            const kitPeakPower = ((kit.panelNumber || 0) * kitPanel.peakPower) / 1000;
+            const totalProdKwh = totalProd.getTotalAcumulate();
+
+            // Evaluate criteria
+            let criterionValue: number;
+            let criterionMet = false;
+
+            if (evaluationMode.energyPercentageSavings !== undefined) {
+              const netFiltered = netConsumption.filterNegativeValues().getTotalAcumulate();
+              criterionValue = ((totalConsumption - netFiltered) / totalConsumption) * 100;
+              criterionMet = criterionValue >= evaluationMode.energyPercentageSavings;
+            } else if (evaluationMode.rawConsumptionPercentage !== undefined) {
+              criterionValue = (totalProdKwh / totalConsumption) * 100;
+              criterionMet = criterionValue >= evaluationMode.rawConsumptionPercentage;
+            } else if (evaluationMode.maxExcessesPercentage !== undefined) {
+              const excessesCurve = netConsumption.filterPositiveValues();
+              criterionValue = (excessesCurve.getTotalAcumulate() / totalProdKwh) * 100 * -1;
+              criterionMet = criterionValue <= evaluationMode.maxExcessesPercentage;
+            } else if (evaluationMode.maxNumberOfOverproductionMonths !== undefined) {
+              const stats = netConsumption.calculateStatistics().statistics.anualMonthAccumulate;
+              let byMonth = stats[Object.keys(stats).find((k) => k !== 'definition') || ''] || {};
+              delete byMonth.yearly;
+              criterionValue = Object.values(byMonth).filter((v: any) => v < 0).length;
+              criterionMet = criterionValue <= evaluationMode.maxNumberOfOverproductionMonths;
+            } else {
+              criterionValue = 0;
+            }
+
+            optimizationLog[kit.idSolarKit] = {
+              identifier: kit.identifier,
+              peakPower: kitPeakPower,
+              totalProduction: totalProdKwh,
+              criterionValue,
+              criterionMet,
+              panelDistribution: surfPanelCount,
+            };
+
+            if (criterionValue > bestApproxValue) {
+              bestApproxValue = criterionValue;
+              bestApproxKit = kit;
+            }
+
+            if (criterionMet) {
+              selectedKit = kit;
+              break;
+            }
+          }
+
+          if (!selectedKit) {
+            selectedKit = bestApproxKit || firstValidKit;
+          }
+
+          const resultData: Record<string, unknown> = {
+            mode: 'kit',
+            evaluationMode,
+            selectedKit: selectedKit ? {
+              idSolarKit: selectedKit.idSolarKit,
+              identifier: selectedKit.identifier,
+              peakPower: ((selectedKit.panelNumber || 0) * (selectedKit.kitSolarPanel?.peakPower || 0)) / 1000,
+              panelNumber: selectedKit.panelNumber,
+              price: selectedKit.price,
+            } : null,
+            kitsEvaluated: Object.keys(optimizationLog).length,
+            optimizationLog,
+          };
+
+          if (opts.apply && selectedKit) {
+            updateStudy(filePath, (s) => {
+              s.solarKit = selectedKit;
+              s.peakPowerIntroductionMode = 'solarKit';
+              s.solarPanel = undefined;
+              s.solarInverters = undefined;
+              s.peakPowerOptimizationMethod = evaluationMode;
+              return undefined;
+            });
+            resultData.applied = true;
+          }
+
+          output(resultData, global);
+        } else {
+          // ── PANEL MODE ──
+          const panel = study.solarPanel as Record<string, unknown> | undefined;
+          if (!panel) {
+            outputError(new Error('No solar panel set. Use: studies set panel --panel-id <id>'));
+            return;
+          }
+
+          const panelPeakPower = (panel.peakPower as number) || 450;
+          const panelWidth = (panel.width as number) || 1134;
+          const panelHeight = (panel.heigth as number) || (panel.height as number) || 1762;
+          const panelObj = { peakPower: panelPeakPower, width: panelWidth, heigth: panelHeight };
+
+          // Calculate max peak power per surface
+          const surfacesMaxPeakPower: Record<string, number> = {};
+          let totalMaxPeakPower = 0;
+
+          for (const surface of surfaces) {
+            const sid = surface.surfaceId as string;
+            const area = surface.area as number | undefined;
+
+            if (area && panelWidth && panelHeight) {
+              const maxPanels = calculateMaxPanels(
+                area,
+                panelObj,
+                (surface.availableAreaPercentage as number) || 85,
+                (surface.panelInclination as number) || 0,
+                (surface.inclination as number) || 0,
+                (surface.panelPosition as string) || 'vertical',
+                ((surface.polygonPath as any)?.[0]?.lat as number) || 37,
+              );
+              surfacesMaxPeakPower[sid] = (maxPanels * panelPeakPower) / 1000;
+            } else {
+              // No area constraint — use large value (500 kWp per surface)
+              surfacesMaxPeakPower[sid] = 500;
+            }
+            totalMaxPeakPower += surfacesMaxPeakPower[sid];
+          }
+
+          // Determine iteration direction and initial value
+          const isAscending = evaluationMode.energyPercentageSavings !== undefined
+            || evaluationMode.economicPercentageSavings !== undefined
+            || evaluationMode.rawConsumptionPercentage !== undefined;
+
+          let peakPower = isAscending ? panelPeakPower / 1000 : totalMaxPeakPower;
+          const optimizationLog: Record<number, any> = {};
+          let resultPeakPower: Record<string, number> = {};
+          let lastResult: number | undefined;
+          const MAX_ITERATIONS = 200;
+          const TOLERANCE = 0.005;
+          let correctionFactor = 1;
+          let itersSinceCorrection = 0;
+
+          for (let iter = 0; iter < MAX_ITERATIONS && peakPower > 0 && peakPower <= totalMaxPeakPower; iter++) {
+            peakPower = parseFloat(peakPower.toFixed(2));
+            itersSinceCorrection++;
+
+            if (itersSinceCorrection >= 20) {
+              correctionFactor += 1.1;
+              itersSinceCorrection = 0;
+            }
+
+            // Calculate change rate
+            let changeRate: number;
+            if (peakPower < 20) changeRate = (panelPeakPower / 1000) * correctionFactor;
+            else if (peakPower < 500) changeRate = 5 * correctionFactor;
+            else changeRate = 50 * correctionFactor;
+
+            // Distribute peak power across surfaces
+            let remaining = peakPower;
+            let totalProd: any = null;
+            resultPeakPower = {};
+
+            for (const surface of surfaces) {
+              const sid = surface.surfaceId as string;
+              const surfPP = Math.min(remaining, surfacesMaxPeakPower[sid]);
+              remaining -= surfPP;
+              resultPeakPower[sid] = surfPP;
+              const surfProd = baseProduction[sid].applyMultiplier(surfPP);
+              totalProd = totalProd ? totalProd.aggregatePowerCurve(surfProd) : surfProd;
+            }
+
+            const netConsumption = consumptionCurve.aggregatePowerCurve(totalProd.applyMultiplier(-1));
+            const totalProdKwh = totalProd.getTotalAcumulate();
+
+            // Evaluate criterion
+            let criterionValue: number;
+            let criterionMet = false;
+
+            if (evaluationMode.energyPercentageSavings !== undefined) {
+              const netFiltered = netConsumption.filterNegativeValues().getTotalAcumulate();
+              criterionValue = ((totalConsumption - netFiltered) / totalConsumption) * 100;
+              criterionMet = criterionValue >= evaluationMode.energyPercentageSavings;
+            } else if (evaluationMode.rawConsumptionPercentage !== undefined) {
+              criterionValue = (totalProdKwh / totalConsumption) * 100;
+              criterionMet = criterionValue >= evaluationMode.rawConsumptionPercentage;
+            } else if (evaluationMode.maxExcessesPercentage !== undefined) {
+              const excessesCurve = netConsumption.filterPositiveValues();
+              criterionValue = (excessesCurve.getTotalAcumulate() / totalProdKwh) * 100 * -1;
+              criterionMet = criterionValue <= evaluationMode.maxExcessesPercentage;
+            } else if (evaluationMode.maxNumberOfOverproductionMonths !== undefined) {
+              const stats = netConsumption.calculateStatistics().statistics.anualMonthAccumulate;
+              let byMonth = stats[Object.keys(stats).find((k) => k !== 'definition') || ''] || {};
+              delete byMonth.yearly;
+              criterionValue = Object.values(byMonth).filter((v: any) => v < 0).length;
+              criterionMet = criterionValue <= evaluationMode.maxNumberOfOverproductionMonths;
+            } else {
+              criterionValue = 0;
+            }
+
+            optimizationLog[peakPower] = {
+              totalProduction: totalProdKwh,
+              criterionValue,
+              criterionMet,
+              surfacesPeakpower: { ...resultPeakPower },
+            };
+
+            if (criterionMet) break;
+
+            // Tolerance check — stop if no meaningful progress
+            if (isAscending && lastResult !== undefined && lastResult * (1 + TOLERANCE) >= criterionValue) {
+              break;
+            }
+            lastResult = criterionValue;
+
+            peakPower += isAscending ? changeRate : -changeRate;
+          }
+
+          // Compute final totals
+          const totalOptimizedPeakPower = Object.values(resultPeakPower).reduce((a, b) => a + b, 0);
+          const totalPanels = Math.round(totalOptimizedPeakPower / (panelPeakPower / 1000));
+
+          const resultData: Record<string, unknown> = {
+            mode: 'panel',
+            evaluationMode,
+            optimizedPeakPower: parseFloat(totalOptimizedPeakPower.toFixed(2)),
+            estimatedPanels: totalPanels,
+            surfacesPeakpower: resultPeakPower,
+            iterations: Object.keys(optimizationLog).length,
+            optimizationLog,
+          };
+
+          if (opts.apply) {
+            updateStudy(filePath, (s) => {
+              const surfs = s.surfaces as Record<string, unknown>[] | undefined;
+              if (surfs) {
+                for (const surf of surfs) {
+                  const sid = surf.surfaceId as string;
+                  if (resultPeakPower[sid] !== undefined) {
+                    const surfPanels = Math.round(resultPeakPower[sid] / (panelPeakPower / 1000));
+                    surf.panelNumber = surfPanels;
+                    surf.installedPower = resultPeakPower[sid] * 1000;
+                  }
+                }
+              }
+              s.peakPowerOptimizationMethod = evaluationMode;
+              return 'surfaces';
+            });
+            resultData.applied = true;
+          }
+
+          output(resultData, global);
+        }
+      } catch (err) {
+        outputError(handleApiError(err));
+      }
+    });
+
+  // ═══════════════════════════════════════════
   //  COMMENTS
   // ═══════════════════════════════════════════
 
@@ -1619,6 +2040,37 @@ async function generateFromProfile(
   }
 
   throw new Error(`Unknown consumption mode: ${mode}`);
+}
+
+/** Calculate max panels that fit in an area (replicates frontend calculateSolarPanelsInArea) */
+function calculateMaxPanels(
+  areaM2: number,
+  panel: { width: number; heigth: number; peakPower?: number },
+  availablePercentage: number,
+  panelInclination: number,
+  surfaceInclination: number,
+  panelPosition: string,
+  latitude: number,
+): number {
+  const { heigth, width } = panel;
+  // Convert m² to mm² and apply available percentage
+  let area = areaM2 * 1000000 * (availablePercentage / 100);
+  const x = 1 / Math.atan(61 - (latitude - surfaceInclination));
+  let totalPanelNumber: number;
+
+  if (panelPosition === 'horizontal') {
+    const h = width * Math.asin(panelInclination * (Math.PI / 180));
+    const minimumDistance = x * h;
+    const panelArea = (heigth + 20) * (width + minimumDistance);
+    totalPanelNumber = area / panelArea;
+  } else {
+    const h = heigth * Math.asin(panelInclination * (Math.PI / 180));
+    const minimumDistance = x * h;
+    const panelArea = (width + 20) * (heigth + minimumDistance);
+    totalPanelNumber = area / panelArea;
+  }
+
+  return isNaN(totalPanelNumber) ? 0 : Math.floor(totalPanelNumber);
 }
 
 /** Collector for repeatable --asset <id:qty> */
