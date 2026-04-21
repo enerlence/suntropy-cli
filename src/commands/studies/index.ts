@@ -48,6 +48,66 @@ const EXPAND_SECTIONS: Record<string, string[]> = {
   location: ['location', 'mapCenter', 'geographicalZone', 'atrTariff'],
 };
 
+/**
+ * Fields that users often ask for on the study but actually live on the
+ * metadata entity (MySQL) — surfaced via `studies list` or `studies metadata`.
+ */
+const METADATA_ONLY_FIELDS: Record<string, string> = {
+  peakPower: 'metadata',
+  sellingPrice: 'metadata',
+  totalCost: 'metadata',
+  anualProduction: 'metadata',
+  anualConsumption: 'metadata',
+  currentState: 'metadata',
+  clientName: 'metadata',
+  idSolarStudyMetadata: 'metadata',
+  solarStudyId: 'metadata',
+};
+
+/**
+ * Fields that don't exist on either the study document or its metadata —
+ * they are computed client-side (builder) or simply don't exist in this API.
+ */
+const COMPUTED_OR_UNKNOWN_FIELDS: Record<string, string> = {
+  completionPercentage: 'computed by `studies validate` / `studies save` from stepsProgress',
+  isCompleted: 'not a persisted field; derive from solarStudyProgress or completionPercentage',
+  stepsProgress: 'computed by `studies validate` / `studies save`',
+};
+
+function explainMissingStudyFields(missing: string[], studyId: string): void {
+  const metadataFields = missing.filter(f => f in METADATA_ONLY_FIELDS);
+  const computedFields = missing.filter(f => f in COMPUTED_OR_UNKNOWN_FIELDS);
+  const unknownFields = missing.filter(f => !(f in METADATA_ONLY_FIELDS) && !(f in COMPUTED_OR_UNKNOWN_FIELDS));
+
+  const lines: string[] = [];
+  lines.push(`warning: ${missing.length} requested field(s) are not present on the study document returned by findById.`);
+
+  if (metadataFields.length > 0) {
+    lines.push('');
+    lines.push(`  These fields live on the STUDY METADATA (MySQL), not on the study document:`);
+    for (const f of metadataFields) lines.push(`    - ${f}`);
+    lines.push(`  Use:  suntropy studies metadata ${studyId} --by-study-id --fields ${metadataFields.join(',')}`);
+    lines.push(`  Or:   suntropy studies list --client-name <name>   (list already projects these fields)`);
+  }
+
+  if (computedFields.length > 0) {
+    lines.push('');
+    lines.push(`  These fields are not persisted on the study:`);
+    for (const f of computedFields) lines.push(`    - ${f}: ${COMPUTED_OR_UNKNOWN_FIELDS[f]}`);
+    lines.push(`  Use:  suntropy studies validate ${studyId}   (returns stepsProgress + completionPercentage)`);
+  }
+
+  if (unknownFields.length > 0) {
+    lines.push('');
+    lines.push(`  These fields were not found on the study document:`);
+    for (const f of unknownFields) lines.push(`    - ${f}`);
+    lines.push(`  If you expected them, try:  suntropy studies get ${studyId} --expand all --format json`);
+    lines.push(`  and inspect the full payload to locate the correct field path.`);
+  }
+
+  process.stderr.write(lines.join('\n') + '\n');
+}
+
 /** Core identity fields always included in get */
 const CORE_FIELDS = [
   '_id', 'id', 'name', 'identifier', 'clientUID',
@@ -163,7 +223,8 @@ export function registerStudiesCommands(program: Command): void {
       'Examples:\n' +
       '  suntropy studies get abc123\n' +
       '  suntropy studies get abc123 --expand surfaces,results\n' +
-      '  suntropy studies get abc123 --expand all'
+      '  suntropy studies get abc123 --expand all\n' +
+      '  suntropy studies get abc123 --fields name,market  (bypasses expand filter)'
     )
     .option('--expand <sections>', 'Comma-separated sections to expand (or "all")')
     .action(async (studyId, opts) => {
@@ -172,7 +233,20 @@ export function registerStudiesCommands(program: Command): void {
         const client = createServiceClient('solar', global);
         const res = await client.get(`/solar-study/findById/${studyId}`);
         const study = res.data as Record<string, unknown>;
-        const filtered = filterStudy(study, opts.expand);
+        // If the user passes --fields, they have already expressed exactly what
+        // they want — don't pre-filter the study, let output() select from the
+        // full object. Otherwise apply the expand-based summary filter.
+        const filtered = global.fields ? study : filterStudy(study, opts.expand);
+
+        if (global.fields) {
+          const requested = global.fields.split(',').map(f => f.trim());
+          const topLevel = requested.map(f => f.split('.')[0]);
+          const missing = topLevel.filter(f => !(f in study));
+          if (missing.length > 0) {
+            explainMissingStudyFields(missing, studyId);
+          }
+        }
+
         output(filtered, global);
       } catch (err) {
         outputError(handleApiError(err));
