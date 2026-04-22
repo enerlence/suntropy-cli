@@ -1,9 +1,16 @@
 import { Command } from 'commander';
 import { loadConfig, saveConfig, setConfigValue, getConfigValue } from '../config.js';
 import { output, outputError } from '../output.js';
+import { registerThemeCommands } from './config/theme.js';
+import { registerSolarformConfigCommands } from './config/solarform.js';
 
 export function registerConfigCommands(program: Command): void {
-  const cfg = program.command('config').description('CLI configuration management');
+  const cfg = program
+    .command('config')
+    .description(
+      'CLI configuration (profiles, server, token) plus tenant configuration\n' +
+      '(theme & SolarForm / SolarForm Advanced) served by the security and solar backends.'
+    );
 
   cfg
     .command('set <key> <value>')
@@ -95,4 +102,7 @@ export function registerConfigCommands(program: Command): void {
         outputError(err);
       }
     });
+
+  registerThemeCommands(cfg);
+  registerSolarformConfigCommands(cfg);
 }
