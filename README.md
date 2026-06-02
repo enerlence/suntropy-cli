@@ -229,6 +229,31 @@ The response is the study with `economicResults.ppaAnalysis` populated
 (`simulationResults[].profitabilityResults` → `irr`, `paybackYears`). Heavy
 PowerCurve objects are summarized unless `--raw` is passed.
 
+### `suntropy shareables` - Shareable Links
+
+Create shareable links for studies (sharing service, exposed under `/templates`).
+The backend fills `uid`, `url`, `clientUID` and `idShareable` from the token.
+
+```bash
+# Public shareable for a solar study
+suntropy shareables create --element-id <studyId>
+
+# With template, name and expiration
+suntropy shareables create --element-id <studyId> \
+  --template-id <templateId> --name "Estudio Juan" --expiration-date 2026-12-31
+
+# Private (password) + send to recipients
+suntropy shareables create --element-id <studyId> \
+  --privacy PRIVATE --password secret --email-list "a@x.com;b@y.com"
+
+# Extra link query params / extra DTO fields
+suntropy shareables create --element-id <studyId> --link-params "utm_source=cli"
+suntropy shareables create --element-id <studyId> --data '{"customLayout":true}'
+```
+
+`--element-type` (default `solarStudy`): `solarStudy | colectiveSolarStudy | veChargerStudy | heatpumpStudy | billing`.
+`--shareable-type` (default `TEMPLATE`): `TEMPLATE | CONTRACT`. The response includes the public `url` and `uid`.
+
 ### `suntropy config` - Configuration
 
 ```bash

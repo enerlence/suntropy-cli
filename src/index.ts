@@ -7,6 +7,7 @@ import { registerCurvesCommands } from './commands/curves/index.js';
 import { registerConsumptionCommands } from './commands/consumption/index.js';
 import { registerSolarformCommands } from './commands/solarform/index.js';
 import { registerPPACommands } from './commands/ppa/index.js';
+import { registerShareableCommands } from './commands/shareables/index.js';
 
 export function createProgram(): Command {
   const program = new Command();
@@ -32,6 +33,7 @@ export function createProgram(): Command {
   registerConsumptionCommands(program);
   registerSolarformCommands(program);
   registerPPACommands(program);
+  registerShareableCommands(program);
 
   return program;
 }
