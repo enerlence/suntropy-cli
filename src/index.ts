@@ -9,13 +9,18 @@ import { registerSolarformCommands } from './commands/solarform/index.js';
 import { registerPPACommands } from './commands/ppa/index.js';
 import { registerShareableCommands } from './commands/shareables/index.js';
 
+// Injected at build time by tsup (define) from package.json. In dev (tsx, no
+// define) the identifier is undefined, so we fall back without throwing.
+declare const __CLI_VERSION__: string;
+const CLI_VERSION = typeof __CLI_VERSION__ !== 'undefined' ? __CLI_VERSION__ : '0.0.0-dev';
+
 export function createProgram(): Command {
   const program = new Command();
 
   program
     .name('suntropy')
     .description('Agent-first CLI for Suntropy solar platform. Optimized for programmatic data manipulation and progressive exploration.')
-    .version('0.1.0')
+    .version(CLI_VERSION)
     .option('--format <format>', 'Output format: json (default), human, csv', 'json')
     .option('--fields <fields>', 'Comma-separated fields to include in output')
     .option('--server <url>', 'Override API server URL')
