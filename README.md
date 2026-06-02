@@ -209,6 +209,26 @@ suntropy solarform calculate --data '{"center":{"lat":37.39,"lng":-5.99},...}'
 suntropy solarform config
 ```
 
+### `suntropy ppa` - PPA Analysis
+
+Read PPA (Power Purchase Agreement) templates and run PPA simulations on a solar study.
+
+```bash
+# Read-only templates
+suntropy ppa templates list --fields _id,name,mode,ppaPrice,useInSolarForm
+suntropy ppa templates get <ppaTemplateId>
+
+# Run a PPA simulation on a study (read-only, does not persist)
+suntropy ppa calculate --study <studyId>                       # uses client useInSolarForm templates
+suntropy ppa calculate --study <studyId> --template <ppaTemplateId>   # uses a single template
+cat study.json | suntropy ppa calculate --data -               # full SolarStudy via stdin
+suntropy ppa calculate --study <studyId> --raw --save-file ppa.json
+```
+
+The response is the study with `economicResults.ppaAnalysis` populated
+(`simulationResults[].profitabilityResults` → `irr`, `paybackYears`). Heavy
+PowerCurve objects are summarized unless `--raw` is passed.
+
 ### `suntropy config` - Configuration
 
 ```bash
