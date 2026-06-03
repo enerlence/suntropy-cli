@@ -8,6 +8,7 @@ import { registerConsumptionCommands } from './commands/consumption/index.js';
 import { registerSolarformCommands } from './commands/solarform/index.js';
 import { registerPPACommands } from './commands/ppa/index.js';
 import { registerShareableCommands } from './commands/shareables/index.js';
+import { registerGeocodeCommands } from './commands/geocode/index.js';
 
 // Injected at build time by tsup (define) from package.json. In dev (tsx, no
 // define) the identifier is undefined, so we fall back without throwing.
@@ -39,6 +40,7 @@ export function createProgram(): Command {
   registerSolarformCommands(program);
   registerPPACommands(program);
   registerShareableCommands(program);
+  registerGeocodeCommands(program);
 
   return program;
 }
