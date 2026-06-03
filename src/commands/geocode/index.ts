@@ -24,13 +24,39 @@ interface GeocodeResponse {
   results: GeocodeResult[];
 }
 
-/** Print the best match by default, or the full candidate list with --all. */
+/** Envelope returned by the solar public API (/api/*). */
+interface PublicApiResponse<T> {
+  code?: number;
+  error?: { code?: string; message?: string };
+  warning?: { code?: string; message?: string };
+  data?: T;
+}
+
+/**
+ * Unwrap the PublicApiResponse envelope, print the best match by default (or the
+ * full candidate list with --all), and surface API-level errors consistently.
+ */
 function emit(
-  data: GeocodeResponse,
+  envelope: PublicApiResponse<GeocodeResponse>,
   all: boolean | undefined,
   query: Record<string, unknown>,
   global: OutputOptions,
 ): void {
+  if (envelope.error) {
+    outputError({
+      error: true,
+      status: envelope.code,
+      message: envelope.error.message || envelope.error.code || 'Geocoding error',
+      details: envelope.error,
+    });
+    return;
+  }
+
+  const data = envelope.data;
+  if (!data) {
+    output({ found: false, ...query }, global);
+    return;
+  }
   if (all) {
     output(data.results, global);
     return;
@@ -64,9 +90,10 @@ export function registerGeocodeCommands(program: Command): void {
       try {
         const global = getGlobalOpts(geocode);
         const client = createServiceClient('solar', global);
-        const res = await client.get<GeocodeResponse>('/geocoding/geocode', {
-          params: { address: opts.address, country: opts.country },
-        });
+        const res = await client.get<PublicApiResponse<GeocodeResponse>>(
+          '/api/geocode',
+          { params: { address: opts.address, country: opts.country } },
+        );
         emit(res.data, opts.all, { address: opts.address }, global);
       } catch (err) {
         outputError(handleApiError(err));
@@ -88,9 +115,10 @@ export function registerGeocodeCommands(program: Command): void {
       try {
         const global = getGlobalOpts(geocode);
         const client = createServiceClient('solar', global);
-        const res = await client.get<GeocodeResponse>('/geocoding/reverse', {
-          params: { lat: opts.lat, lng: opts.lng },
-        });
+        const res = await client.get<PublicApiResponse<GeocodeResponse>>(
+          '/api/reverse-geocode',
+          { params: { lat: opts.lat, lng: opts.lng } },
+        );
         emit(res.data, opts.all, { lat: opts.lat, lng: opts.lng }, global);
       } catch (err) {
         outputError(handleApiError(err));
