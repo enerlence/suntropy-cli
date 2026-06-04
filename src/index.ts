@@ -8,6 +8,7 @@ import { registerConsumptionCommands } from './commands/consumption/index.js';
 import { registerSolarformCommands } from './commands/solarform/index.js';
 import { registerPPACommands } from './commands/ppa/index.js';
 import { registerShareableCommands } from './commands/shareables/index.js';
+import { registerTemplatesCommands } from './commands/templates/index.js';
 import { registerGeocodeCommands } from './commands/geocode/index.js';
 
 // Injected at build time by tsup (define) from package.json. In dev (tsx, no
@@ -40,6 +41,7 @@ export function createProgram(): Command {
   registerSolarformCommands(program);
   registerPPACommands(program);
   registerShareableCommands(program);
+  registerTemplatesCommands(program);
   registerGeocodeCommands(program);
 
   return program;

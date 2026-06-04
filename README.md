@@ -254,6 +254,30 @@ suntropy shareables create --element-id <studyId> --data '{"customLayout":true}'
 `--element-type` (default `solarStudy`): `solarStudy | colectiveSolarStudy | veChargerStudy | heatpumpStudy | billing`.
 `--shareable-type` (default `TEMPLATE`): `TEMPLATE | CONTRACT`. The response includes the public `url` and `uid`.
 
+### `suntropy templates` - Document Templates
+
+List the client document templates (budget/document templates from the sharing
+service), proxied via solar under `GET /api/templates`. Returns only `_id` and
+`templateName`.
+
+```bash
+# Solar study templates (default --type solarStudy)
+suntropy templates list
+
+# Other template types
+suntropy templates list --type colectiveSolarStudy
+suntropy templates list --type veChargerStudy
+
+# Generic (untyped) templates
+suntropy templates list --type generic
+
+# Pick fields / change format
+suntropy templates list --fields _id,templateName --format csv
+```
+
+`--type` (default `solarStudy`): `solarStudy | colectiveSolarStudy | veChargerStudy | generic`.
+`generic` lists the untyped templates (sends no `templateIdentifier` filter).
+
 ### `suntropy config` - Configuration
 
 ```bash
