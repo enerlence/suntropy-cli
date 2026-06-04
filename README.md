@@ -20,12 +20,20 @@ npx @enerlence/suntropy-cli <command>
 # API key (preferred for agents)
 suntropy auth set-key --key <jwt-api-key>
 
+# Target a specific server / profile (global options — see "Global Options")
+suntropy --server https://api-dev.example.cloud --profile dev auth set-key --key <jwt>
+suntropy --profile dev auth status
+
 # Email/password login
 suntropy auth login --email user@co.com --password pass
 
 # Check status
 suntropy auth status
 ```
+
+> `--server`, `--profile` and `--token` are **global** options: pass them on the
+> root command (e.g. `suntropy --profile dev auth status`). They apply to every
+> subcommand, including `auth`.
 
 ## Global Options
 
