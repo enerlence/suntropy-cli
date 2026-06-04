@@ -17,19 +17,21 @@ export function registerAuthCommands(program: Command): void {
     .command('set-key')
     .description('Set an API key (JWT) for authentication. Preferred method for agents.')
     .requiredOption('--key <jwt>', 'JWT API key')
-    .option('--server <url>', 'API server URL')
-    .option('--profile <name>', 'Profile name')
     .action(async (opts) => {
       try {
+        // --server / --profile are global root options (see createProgram);
+        // read them from there instead of redefining them locally, otherwise
+        // Commander assigns them to the root and they never reach this action.
+        const global = getGlobalOpts(auth);
         const config = loadConfig();
-        const profileName = opts.profile || config.activeProfile;
+        const profileName = (global.profile as string) || config.activeProfile;
         if (!config.profiles[profileName]) {
           config.profiles[profileName] = { server: 'https://api.enerlence.com' };
         }
         const profile = config.profiles[profileName];
         profile.token = opts.key;
         profile.authMethod = 'api-key';
-        if (opts.server) profile.server = opts.server;
+        if (global.server) profile.server = global.server as string;
 
         // Decode JWT to extract clientUID
         try {
@@ -53,17 +55,17 @@ export function registerAuthCommands(program: Command): void {
     .description('Login with email and password')
     .requiredOption('--email <email>', 'User email')
     .requiredOption('--password <password>', 'User password')
-    .option('--server <url>', 'API server URL')
-    .option('--profile <name>', 'Profile name')
     .action(async (opts) => {
       try {
+        // --server / --profile come from the global root options.
+        const global = getGlobalOpts(auth);
         const config = loadConfig();
-        const profileName = opts.profile || config.activeProfile;
+        const profileName = (global.profile as string) || config.activeProfile;
         if (!config.profiles[profileName]) {
           config.profiles[profileName] = { server: 'https://api.enerlence.com' };
         }
         const profile = config.profiles[profileName];
-        if (opts.server) profile.server = opts.server;
+        if (global.server) profile.server = global.server as string;
 
         const securityUrl = getServiceUrl(profile.server, 'security');
         const client = createUnauthClient(securityUrl);
@@ -98,11 +100,12 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command('status')
     .description('Show current authentication status')
-    .option('--profile <name>', 'Profile name')
-    .action(async (opts) => {
+    .action(async () => {
       try {
+        // --profile is a global root option.
+        const global = getGlobalOpts(auth);
         const config = loadConfig();
-        const profile = getActiveProfile(config, opts.profile);
+        const profile = getActiveProfile(config, global.profile as string);
         if (!profile.token) {
           output({ authenticated: false, message: 'No token configured' }, getGlobalOpts(auth));
           return;
@@ -141,12 +144,12 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command('refresh')
     .description('Refresh the current JWT token')
-    .option('--profile <name>', 'Profile name')
-    .action(async (opts) => {
+    .action(async () => {
       try {
+        // --profile is a global root option.
+        const globalOpts = getGlobalOpts(auth);
         const config = loadConfig();
-        const profileName = opts.profile || config.activeProfile;
-        const globalOpts = program.opts();
+        const profileName = (globalOpts.profile as string) || config.activeProfile;
         const client = createServiceClient('security', { ...globalOpts, profile: profileName });
         const res = await client.get('/auth/jwt/refreshToken');
 
