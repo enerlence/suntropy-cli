@@ -10,6 +10,8 @@ import { registerPPACommands } from './commands/ppa/index.js';
 import { registerShareableCommands } from './commands/shareables/index.js';
 import { registerTemplatesCommands } from './commands/templates/index.js';
 import { registerGeocodeCommands } from './commands/geocode/index.js';
+import { registerCommandProfileCommand } from './commands/command-profile.js';
+import { applyCommandProfile } from './access.js';
 
 // Injected at build time by tsup (define) from package.json. In dev (tsx, no
 // define) the identifier is undefined, so we fall back without throwing.
@@ -43,6 +45,15 @@ export function createProgram(): Command {
   registerShareableCommands(program);
   registerTemplatesCommands(program);
   registerGeocodeCommands(program);
+
+  // Hidden admin command to manage the command access profile. Registered last
+  // and always exempt from gating, so it can raise/lower the tier from any tier.
+  registerCommandProfileCommand(program);
+
+  // Gate the command tree by the active permission tier (env > config > default
+  // 'delete'). Commands above the tier are pruned: absent from --help and
+  // reported as "unknown command" when invoked.
+  applyCommandProfile(program);
 
   return program;
 }
