@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { v4 } from 'uuid';
 import { createServiceClient, handleApiError } from '../../client.js';
@@ -1939,11 +1939,24 @@ export function registerStudyBuilderCommands(studies: Command): void {
       'Example: suntropy studies comment abc123 --content "Revisado por agente"'
     )
     .requiredOption('--content <text>', 'Comment text')
+    // Hidden flags for the "Tag de Alexandria en comentarios" workflow (sprint
+    // Suntropy AI). They are intentionally omitted from --help / docs: the
+    // Alexandria agent is instructed to use them in that specific workflow only.
+    // - `--as-alexandria` signs the comment as Alexandria.
+    // - `--reply-to-user`/`--reply-to-name` prepend a mention `@[name](userUID)`
+    //   with the markup the backend parses to notify that user.
+    .addOption(new Option('--as-alexandria').hideHelp())
+    .addOption(new Option('--reply-to-user <userUID>').hideHelp())
+    .addOption(new Option('--reply-to-name <name>').hideHelp())
     .action(async (studyId, opts) => {
       try {
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
-        const comment = createComment('commented', opts.content);
+        const comment = createComment('commented', opts.content, {
+          asAlexandria: Boolean(opts.asAlexandria),
+          replyToUser: opts.replyToUser,
+          replyToName: opts.replyToName,
+        });
         const res = await client.post(`/solar-study/addSolarStudyComment/${studyId}`, comment);
         output(res.data, global);
       } catch (err) {
@@ -2115,18 +2128,47 @@ async function fetchPeriodDistribution(
   }
 }
 
+interface CreateCommentExtra {
+  /** Sign the comment as Alexandria (AI assistant) instead of the active user. */
+  asAlexandria?: boolean;
+  /** userUID to mention at the start of the comment so the backend notifies them. */
+  replyToUser?: string;
+  /** Display name for the mentioned user (defaults to the userUID). */
+  replyToName?: string;
+}
+
 /** Create a study comment (replicates frontend createNewComment) */
-function createComment(type: string, content?: string): Record<string, unknown> {
+function createComment(
+  type: string,
+  content?: string,
+  extra?: CreateCommentExtra
+): Record<string, unknown> {
   const config = loadConfig();
   const profile = getActiveProfile(config);
   const autoContent: Record<string, string> = {
     created: 'Estudio creado via CLI',
     modified: 'Estudio actualizado via CLI',
   };
-  return {
-    content: content || autoContent[type] || '',
+
+  let body = content || autoContent[type] || '';
+  // Prepend a mention so the backend parses it and notifies the user. The
+  // markup must match react-mentions / the backend regex: @[name](userUID).
+  if (extra?.replyToUser) {
+    const name = extra.replyToName || extra.replyToUser;
+    body = `@[${name}](${extra.replyToUser}) ${body}`.trim();
+  }
+
+  const comment: Record<string, unknown> = {
+    content: body,
     type,
     creationTimestamp: new Date().toISOString(),
-    creationUserUID: profile.userUID || 'cli-agent',
+    creationUserUID: extra?.asAlexandria
+      ? 'alexandria'
+      : profile.userUID || 'cli-agent',
   };
+  // Mark AI-authored comments so the frontend renders them as Alexandria.
+  if (extra?.asAlexandria) {
+    comment.aiGenerated = true;
+  }
+  return comment;
 }
