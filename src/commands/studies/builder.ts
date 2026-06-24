@@ -1936,14 +1936,33 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .command('comment <studyId>')
     .description(
       'Add a comment to an existing study via API.\n' +
-      'Example: suntropy studies comment abc123 --content "Revisado por agente"'
+      'Example: suntropy studies comment abc123 --content "Revisado por agente"\n' +
+      'Example (as Alexandria, replying to the user who triggered the thread):\n' +
+      '  suntropy studies comment abc123 --as-alexandria \\\n' +
+      '    --reply-to-user u-123 --reply-to-name "Pablo" --content "He revisado el ahorro anual."'
     )
     .requiredOption('--content <text>', 'Comment text')
+    .option(
+      '--as-alexandria',
+      'Sign the comment as Alexandria (AI assistant) instead of the active user'
+    )
+    .option(
+      '--reply-to-user <userUID>',
+      'Mention this userUID at the start of the comment (the backend parses it and notifies the user)'
+    )
+    .option(
+      '--reply-to-name <name>',
+      'Display name for the mentioned user (defaults to the userUID)'
+    )
     .action(async (studyId, opts) => {
       try {
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
-        const comment = createComment('commented', opts.content);
+        const comment = createComment('commented', opts.content, {
+          asAlexandria: Boolean(opts.asAlexandria),
+          replyToUser: opts.replyToUser,
+          replyToName: opts.replyToName,
+        });
         const res = await client.post(`/solar-study/addSolarStudyComment/${studyId}`, comment);
         output(res.data, global);
       } catch (err) {
@@ -2115,18 +2134,47 @@ async function fetchPeriodDistribution(
   }
 }
 
+interface CreateCommentExtra {
+  /** Sign the comment as Alexandria (AI assistant) instead of the active user. */
+  asAlexandria?: boolean;
+  /** userUID to mention at the start of the comment so the backend notifies them. */
+  replyToUser?: string;
+  /** Display name for the mentioned user (defaults to the userUID). */
+  replyToName?: string;
+}
+
 /** Create a study comment (replicates frontend createNewComment) */
-function createComment(type: string, content?: string): Record<string, unknown> {
+function createComment(
+  type: string,
+  content?: string,
+  extra?: CreateCommentExtra
+): Record<string, unknown> {
   const config = loadConfig();
   const profile = getActiveProfile(config);
   const autoContent: Record<string, string> = {
     created: 'Estudio creado via CLI',
     modified: 'Estudio actualizado via CLI',
   };
-  return {
-    content: content || autoContent[type] || '',
+
+  let body = content || autoContent[type] || '';
+  // Prepend a mention so the backend parses it and notifies the user. The
+  // markup must match react-mentions / the backend regex: @[name](userUID).
+  if (extra?.replyToUser) {
+    const name = extra.replyToName || extra.replyToUser;
+    body = `@[${name}](${extra.replyToUser}) ${body}`.trim();
+  }
+
+  const comment: Record<string, unknown> = {
+    content: body,
     type,
     creationTimestamp: new Date().toISOString(),
-    creationUserUID: profile.userUID || 'cli-agent',
+    creationUserUID: extra?.asAlexandria
+      ? 'alexandria'
+      : profile.userUID || 'cli-agent',
   };
+  // Mark AI-authored comments so the frontend renders them as Alexandria.
+  if (extra?.asAlexandria) {
+    comment.aiGenerated = true;
+  }
+  return comment;
 }
