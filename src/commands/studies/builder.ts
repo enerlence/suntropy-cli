@@ -1958,11 +1958,31 @@ export function registerStudyBuilderCommands(studies: Command): void {
           replyToName: opts.replyToName,
         });
         const res = await client.post(`/solar-study/addSolarStudyComment/${studyId}`, comment);
-        // The backend returns the updated study on success, but an EMPTY body
-        // (200) when the study isn't found — guard so we never report a comment
-        // as saved when it wasn't.
-        const saved = assertFound(res.data, 'Solar study', studyId);
-        output(saved, global);
+        // The endpoint returns the FULL updated study (and an EMPTY body when the
+        // study isn't found). Keep the guard so we never report a non-saved
+        // comment as success, but DON'T dump the whole study: emit a compact
+        // confirmation of the comment that was created.
+        const saved = assertFound(res.data, 'Solar study', studyId) as {
+          comments?: unknown[];
+        };
+        output(
+          {
+            success: true,
+            message: `Comentario añadido al estudio ${studyId}`,
+            studyId,
+            commentsCount: Array.isArray(saved.comments)
+              ? saved.comments.length
+              : undefined,
+            comment: {
+              type: comment.type,
+              creationUserUID: comment.creationUserUID,
+              creationTimestamp: comment.creationTimestamp,
+              aiGenerated: comment.aiGenerated ?? false,
+              content: comment.content,
+            },
+          },
+          global,
+        );
       } catch (err) {
         outputError(handleApiError(err));
       }
