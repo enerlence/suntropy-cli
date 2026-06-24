@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { v4 } from 'uuid';
 import { createServiceClient, handleApiError } from '../../client.js';
@@ -1936,24 +1936,18 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .command('comment <studyId>')
     .description(
       'Add a comment to an existing study via API.\n' +
-      'Example: suntropy studies comment abc123 --content "Revisado por agente"\n' +
-      'Example (as Alexandria, replying to the user who triggered the thread):\n' +
-      '  suntropy studies comment abc123 --as-alexandria \\\n' +
-      '    --reply-to-user u-123 --reply-to-name "Pablo" --content "He revisado el ahorro anual."'
+      'Example: suntropy studies comment abc123 --content "Revisado por agente"'
     )
     .requiredOption('--content <text>', 'Comment text')
-    .option(
-      '--as-alexandria',
-      'Sign the comment as Alexandria (AI assistant) instead of the active user'
-    )
-    .option(
-      '--reply-to-user <userUID>',
-      'Mention this userUID at the start of the comment (the backend parses it and notifies the user)'
-    )
-    .option(
-      '--reply-to-name <name>',
-      'Display name for the mentioned user (defaults to the userUID)'
-    )
+    // Hidden flags for the "Tag de Alexandria en comentarios" workflow (sprint
+    // Suntropy AI). They are intentionally omitted from --help / docs: the
+    // Alexandria agent is instructed to use them in that specific workflow only.
+    // - `--as-alexandria` signs the comment as Alexandria.
+    // - `--reply-to-user`/`--reply-to-name` prepend a mention `@[name](userUID)`
+    //   with the markup the backend parses to notify that user.
+    .addOption(new Option('--as-alexandria').hideHelp())
+    .addOption(new Option('--reply-to-user <userUID>').hideHelp())
+    .addOption(new Option('--reply-to-name <name>').hideHelp())
     .action(async (studyId, opts) => {
       try {
         const global = getGlobalOpts(studies);
