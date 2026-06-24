@@ -69,6 +69,34 @@ export function createUnauthClient(baseURL: string): AxiosInstance {
   });
 }
 
+/**
+ * Validates that an API response body actually contains an entity.
+ *
+ * The solar backend returns `200` with an EMPTY body when `findById` /
+ * `addSolarStudyComment` don't match a document (wrong id, or the id belongs to
+ * a different clientUID / environment). Without this guard the CLI either
+ * crashes downstream (`'_id' in data`, `data.solarStudyProgress = ...` on `""`)
+ * or — worse, for writes — reports `success` even though nothing was saved.
+ *
+ * Throws a clear, actionable error so the caller's try/catch surfaces it via
+ * `outputError` with a non-zero exit code.
+ */
+export function assertFound<T>(data: T, entity: string, id: string): T {
+  const isEmptyObject =
+    data != null &&
+    typeof data === 'object' &&
+    !Array.isArray(data) &&
+    Object.keys(data as Record<string, unknown>).length === 0;
+  if (data == null || typeof data !== 'object' || Array.isArray(data) || isEmptyObject) {
+    throw new Error(
+      `${entity} not found: ${id}. The backend returned an empty response — ` +
+        `verify the id is correct and belongs to your account and environment ` +
+        `(the CLI and the app must point to the same backend).`,
+    );
+  }
+  return data;
+}
+
 export function handleApiError(err: unknown): ApiError {
   if (axios.isAxiosError(err)) {
     const ae = err as AxiosError;

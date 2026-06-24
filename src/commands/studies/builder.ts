@@ -1,7 +1,7 @@
 import { Command, Option } from 'commander';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { v4 } from 'uuid';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { createServiceClient, handleApiError, assertFound } from '../../client.js';
 import { loadConfig, getActiveProfile } from '../../config.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
@@ -483,7 +483,7 @@ export function registerStudyBuilderCommands(studies: Command): void {
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
         const res = await client.get(`/solar-study/findById/${studyId}`);
-        const study = res.data as Study;
+        const study = assertFound(res.data, 'Solar study', studyId) as Study;
 
         // Re-validate
         const { stepsProgress, missing } = evaluateSteps(study);
@@ -1958,7 +1958,11 @@ export function registerStudyBuilderCommands(studies: Command): void {
           replyToName: opts.replyToName,
         });
         const res = await client.post(`/solar-study/addSolarStudyComment/${studyId}`, comment);
-        output(res.data, global);
+        // The backend returns the updated study on success, but an EMPTY body
+        // (200) when the study isn't found — guard so we never report a comment
+        // as saved when it wasn't.
+        const saved = assertFound(res.data, 'Solar study', studyId);
+        output(saved, global);
       } catch (err) {
         outputError(handleApiError(err));
       }
