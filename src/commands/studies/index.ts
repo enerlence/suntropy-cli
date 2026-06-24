@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { createServiceClient, handleApiError, assertFound } from '../../client.js';
 import { output, outputError, outputPaginated, type OutputOptions } from '../../output.js';
 import { registerStudyBuilderCommands } from './builder.js';
 
@@ -232,7 +232,7 @@ export function registerStudiesCommands(program: Command): void {
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
         const res = await client.get(`/solar-study/findById/${studyId}`);
-        const study = res.data as Record<string, unknown>;
+        const study = assertFound(res.data, 'Solar study', studyId) as Record<string, unknown>;
         // If the user passes --fields, they have already expressed exactly what
         // they want — don't pre-filter the study, let output() select from the
         // full object. Otherwise apply the expand-based summary filter.
@@ -274,7 +274,7 @@ export function registerStudiesCommands(program: Command): void {
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
         const res = await client.get(`/solar-study/findById/${studyId}`);
-        const study = res.data as Record<string, unknown>;
+        const study = assertFound(res.data, 'Solar study', studyId) as Record<string, unknown>;
 
         // Extract the requested curve
         let curveData: unknown;
