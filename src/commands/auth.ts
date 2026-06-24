@@ -165,4 +165,65 @@ export function registerAuthCommands(program: Command): void {
         outputError(handleApiError(err));
       }
     });
+
+  // --- logout ---
+  auth
+    .command('logout')
+    .description(
+      'Clear stored credentials for the active profile (or --profile). Removes the\n' +
+      'token and account identity but keeps the profile and its server URL.\n' +
+      'Use --all to log out of every profile.'
+    )
+    .option('--all', 'Clear credentials for ALL profiles')
+    .action(async (opts) => {
+      try {
+        // --profile is a global root option.
+        const global = getGlobalOpts(auth);
+        const config = loadConfig();
+
+        // Strip credentials/identity from a profile, keep server. Returns
+        // whether the profile actually had a token before clearing.
+        const clearProfile = (name: string): boolean => {
+          const profile = config.profiles[name];
+          if (!profile) return false;
+          const hadToken = !!profile.token;
+          delete profile.token;
+          delete profile.authMethod;
+          delete profile.email;
+          delete profile.clientUID;
+          delete profile.userUID;
+          return hadToken;
+        };
+
+        if (opts.all) {
+          const names = Object.keys(config.profiles);
+          const clearedWithToken = names.filter(clearProfile);
+          saveConfig(config);
+          output({
+            success: true,
+            message: `Logged out of ${names.length} profile(s).`,
+            profiles: names,
+            hadCredentials: clearedWithToken,
+          }, global);
+          return;
+        }
+
+        const profileName = (global.profile as string) || config.activeProfile;
+        if (!config.profiles[profileName]) {
+          outputError(new Error(`Profile "${profileName}" not found. Available: ${Object.keys(config.profiles).join(', ')}`));
+          return;
+        }
+        const hadToken = clearProfile(profileName);
+        saveConfig(config);
+        output({
+          success: true,
+          profile: profileName,
+          message: hadToken
+            ? `Logged out of profile "${profileName}". Credentials cleared (server kept).`
+            : `Profile "${profileName}" had no stored credentials.`,
+        }, global);
+      } catch (err) {
+        outputError(err);
+      }
+    });
 }
