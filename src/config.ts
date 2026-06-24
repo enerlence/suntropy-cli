@@ -14,6 +14,13 @@ export interface SuntropyProfile {
 export interface SuntropyConfig {
   activeProfile: string;
   profiles: Record<string, SuntropyProfile>;
+  /**
+   * Command access profile (permission tier). Gates which commands are
+   * registered/visible. Cumulative: read ⊂ write ⊂ delete. Absent → 'delete'
+   * (full access, preserves legacy behavior). Managed via the hidden
+   * `command-profile` admin command or the SUNTROPY_COMMAND_PROFILE env var.
+   */
+  commandProfile?: 'read' | 'write' | 'delete';
 }
 
 const CONFIG_DIR = join(homedir(), '.suntropy');
