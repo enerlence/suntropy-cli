@@ -19,9 +19,12 @@ function resolveAuth(opts: ClientOptions): { server: string; token: string } {
   const config = loadConfig();
   const profile = getActiveProfile(config, opts.profile);
   const server = opts.server || profile.server;
-  const token = opts.token || profile.token;
+  // Auth token resolution order: explicit --token flag > SUNTROPY_API_KEY env var > stored profile token.
+  // The env var fallback lets host runtimes (e.g. ShellPilot) inject a just-in-time credential
+  // without requiring a prior `auth login` / `auth set-key` to write the config file.
+  const token = opts.token || process.env.SUNTROPY_API_KEY || profile.token;
   if (!token) {
-    throw new Error('Not authenticated. Run: suntropy auth set-key --key <jwt> or suntropy auth login');
+    throw new Error('Not authenticated. Run: suntropy auth set-key --key <jwt> or suntropy auth login, or set the SUNTROPY_API_KEY env var.');
   }
   return { server, token };
 }
