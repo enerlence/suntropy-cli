@@ -35,6 +35,27 @@ suntropy auth status
 > root command (e.g. `suntropy --profile dev auth status`). They apply to every
 > subcommand, including `auth`.
 
+### Token resolution order
+
+The auth token is resolved in this order (first non-empty wins):
+
+1. `--token <jwt>` global flag
+2. `SUNTROPY_API_KEY` environment variable
+3. `token` stored in the active profile (`~/.suntropy/config.json`, written by
+   `auth set-key` / `auth login`)
+
+The `SUNTROPY_API_KEY` fallback (available since `0.11.3`) lets a host runtime
+inject a just-in-time credential without a prior `auth login` / `auth set-key`:
+
+```bash
+SUNTROPY_API_KEY=<jwt> suntropy studies list
+```
+
+> ⚠️ The value must be a **JWT** (the one you'd pass to `auth set-key --key`),
+> since the CLI sends it as `Authorization: Bearer <token>`. Despite the name, it
+> is not a `shp_`/`devic-`-style API key — an invalid format yields a 401 from
+> the backend.
+
 ## Global Options
 
 | Option | Default | Description |
@@ -42,7 +63,7 @@ suntropy auth status
 | `--format json\|human\|csv` | `json` | Output format |
 | `--fields f1,f2,...` | all | Select specific fields |
 | `--server <url>` | config | Override API server URL |
-| `--token <jwt>` | config | Override auth token |
+| `--token <jwt>` | `SUNTROPY_API_KEY` env / config | Override auth token (see "Token resolution order") |
 | `--profile <name>` | default | Config profile |
 | `--verbose` | false | Show HTTP details on stderr |
 | `--quiet` | false | Suppress non-data output |
