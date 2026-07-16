@@ -388,6 +388,48 @@ export function resolveSurfaceCoordinates(
   return null;
 }
 
+/**
+ * Installed DC power (Watts) sent to `/solar-study/calculateProduction` for a
+ * surface, replicating the frontend `generateCalculateProductionDto`:
+ *
+ *   installedPower = (panelsLayoutPolygons?.length ?? panelNumber) * panelPeakPower
+ *
+ * The panel peak power comes from `study.solarPanel.peakPower` — kit mode also
+ * populates `solarPanel` from `solarKit.kitSolarPanel`, so both peak-power modes
+ * resolve. An explicit `surface.installedPower` (e.g. from `add surface --power`)
+ * takes precedence. The old code read only `surface.installedPower || 5000`, a
+ * field the frontend never sets, so studies built in the UI were silently
+ * calculated for the 5000 W (5 kWp) default.
+ *
+ * Returns `isDefault: true` when it had to fall back to 5000 W so the caller can
+ * warn instead of emitting wrong production numbers silently.
+ */
+export function resolveSurfaceInstalledPower(
+  surface: Record<string, unknown>,
+  study: Study,
+): { installedPower: number; isDefault: boolean } {
+  const explicit = surface.installedPower as number | undefined;
+  if (Number.isFinite(explicit) && (explicit as number) > 0) {
+    return { installedPower: explicit as number, isDefault: false };
+  }
+
+  const solarPanel = study.solarPanel as { peakPower?: number } | undefined;
+  const kitPanel = (study.solarKit as { kitSolarPanel?: { peakPower?: number } } | undefined)?.kitSolarPanel;
+  const panelPeakPower = (solarPanel?.peakPower as number) || (kitPanel?.peakPower as number) || undefined;
+
+  // Frontend precedence: drawn panel layout length, else surface.panelNumber.
+  const layout = surface.panelsLayoutPolygons as unknown[] | undefined;
+  const panelCount = layout !== undefined
+    ? (layout.length || 0)
+    : (surface.panelNumber as number | undefined);
+
+  if (panelPeakPower && Number.isFinite(panelCount) && (panelCount as number) > 0) {
+    return { installedPower: (panelCount as number) * panelPeakPower, isDefault: false };
+  }
+
+  return { installedPower: 5000, isDefault: true };
+}
+
 // ─── Register commands ───
 
 export function registerStudyBuilderCommands(studies: Command): void {
@@ -1260,10 +1302,18 @@ export function registerStudyBuilderCommands(studies: Command): void {
             continue;
           }
           const { lat, lng } = coords;
+          // Installed power: explicit → (panel layout | panelNumber) × panel peak power (frontend parity)
+          const { installedPower, isDefault } = resolveSurfaceInstalledPower(surface, study);
+          if (isDefault) {
+            outputError(new Error(
+              `Surface ${idx} has no resolvable installed power (no installedPower, and no panel layout / panelNumber with a solarPanel/solarKit peak power). `
+              + `Using the 5000W default — production will be wrong. Set the panels and kit/panel before calculating.`,
+            ));
+          }
           const body = {
             lat,
             long: lng,
-            instaledPower: (surface.installedPower as number) || 5000,
+            instaledPower: installedPower,
             angle: (surface.inclination as number) || (surface.angle as number) || 30,
             azimuth: (surface.orientation as number) || (surface.azimuth as number) || 180,
             lossesPercentage: parseFloat(opts.losses),
