@@ -1140,7 +1140,7 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .option('--excesses-mode <mode>', 'Excesses compensation: gridSelling, PPA, noInjection, virtualBattery')
     .option('--excesses-buy-price <n>', 'Excesses buy price (€/MWh)')
     .option('--excesses-selling-price <n>', 'Excesses selling price (€/MWh)')
-    .option('--peak-power-cost <n>', 'Cost per kWp (€/kWp)')
+    .option('--peak-power-cost <n>', 'Cost per Wp (€/Wp). If --total-cost is omitted, totalCost is derived as cost × installed peak power (W)')
     .option('--guarantee-production <n>', 'Guarantee production percentage')
     .action(async (opts) => {
       try {
@@ -1158,6 +1158,46 @@ export function registerStudyBuilderCommands(studies: Command): void {
           if (opts.excessesSellingPrice !== undefined) er.excessesSellingPrice = parseFloat(opts.excessesSellingPrice);
           if (opts.peakPowerCost !== undefined) er.peakPowerCost = parseFloat(opts.peakPowerCost);
           if (opts.guaranteeProduction !== undefined) er.guaranteeProductionPercentage = parseFloat(opts.guaranteeProduction);
+
+          // Auto-derive totalCost from the per-Wp cost when --peak-power-cost is set
+          // but --total-cost is not. The economic balance uses economicResults.totalCost
+          // as the source of truth; the frontend only derives the €/Wp figure from it
+          // (totalCost / installedPeakPowerWp). We invert that here so setting the €/Wp
+          // cost alone yields a correct total instead of leaving totalCost untouched
+          // (which previously kept the balance at 0). Installed peak power is the sum of
+          // the surfaces' resolved installedPower (W); peakPowerCost is €/Wp, so
+          // totalCost = cost × watts. If no surface has a resolvable power we warn
+          // (non-fatal) instead of writing a wrong total.
+          if (opts.peakPowerCost !== undefined && opts.totalCost === undefined) {
+            const surfaces = (study.surfaces as Record<string, unknown>[] | undefined) || [];
+            let totalWatts = 0;
+            let resolvedCount = 0;
+            let anyDefault = false;
+            for (const surface of surfaces) {
+              const { installedPower, isDefault } = resolveSurfaceInstalledPower(surface, study);
+              if (isDefault) {
+                anyDefault = true;
+                continue;
+              }
+              totalWatts += installedPower;
+              resolvedCount += 1;
+            }
+            if (resolvedCount > 0 && !anyDefault) {
+              er.totalCost = Math.round(parseFloat(opts.peakPowerCost) * totalWatts * 100) / 100;
+            } else {
+              process.stderr.write(
+                JSON.stringify({
+                  warning:
+                    'Set --peak-power-cost but could not derive totalCost: ' +
+                    (surfaces.length === 0
+                      ? 'the study has no surfaces.'
+                      : 'some surfaces have no resolvable installed power (set panels + kit/panel first).') +
+                    ' Pass --total-cost explicitly to set it.',
+                }) + '\n',
+              );
+            }
+          }
+
           study.economicResults = er;
           return undefined;
         });
