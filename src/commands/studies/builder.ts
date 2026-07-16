@@ -337,6 +337,57 @@ function resolveFile(opts: { file?: string }): string {
   return opts.file || process.env.SUNTROPY_STUDY || './study.json';
 }
 
+type LatLng = { lat: number; lng: number };
+
+/**
+ * Resolve the geographic coordinates used to calculate a surface, in order of
+ * preference:
+ *   1. surface.center          — explicit surface centre (e.g. set by `add surface`)
+ *   2. study.location          — study-level location
+ *   3. polygonPath centroid    — average of the drawn polygon vertices
+ *   4. polygonPath first point — fallback when the centroid is degenerate
+ *
+ * A surface drawn in the editor arrives with a full `polygonPath` but no
+ * `center`, and studies from that flow may also lack `location`. Deriving the
+ * coordinate from the polygon lets those surfaces be calculated instead of
+ * failing with "no coordinates". Returns null only when no usable point exists.
+ */
+export function resolveSurfaceCoordinates(
+  surface: Record<string, unknown>,
+  study: Study,
+): LatLng | null {
+  const isValid = (c: unknown): c is LatLng => {
+    const p = c as LatLng | undefined;
+    return !!p && Number.isFinite(p.lat) && Number.isFinite(p.lng);
+  };
+
+  const center = surface.center as LatLng | undefined;
+  if (isValid(center)) return { lat: center.lat, lng: center.lng };
+
+  const studyLocation = study.location as LatLng | undefined;
+  if (isValid(studyLocation)) return { lat: studyLocation.lat, lng: studyLocation.lng };
+
+  const path = surface.polygonPath as Array<{ lat?: number; lng?: number }> | undefined;
+  if (Array.isArray(path) && path.length > 0) {
+    const points = path.filter(
+      (p): p is LatLng => Number.isFinite(p?.lat) && Number.isFinite(p?.lng),
+    );
+    if (points.length > 0) {
+      // Centroid: average of the polygon vertices.
+      const sum = points.reduce(
+        (acc, p): LatLng => ({ lat: acc.lat + p.lat, lng: acc.lng + p.lng }),
+        { lat: 0, lng: 0 },
+      );
+      const centroid = { lat: sum.lat / points.length, lng: sum.lng / points.length };
+      if (isValid(centroid)) return centroid;
+      // Fallback: first valid point of the path.
+      return { lat: points[0].lat, lng: points[0].lng };
+    }
+  }
+
+  return null;
+}
+
 // ─── Register commands ───
 
 export function registerStudyBuilderCommands(studies: Command): void {
@@ -1202,15 +1253,13 @@ export function registerStudyBuilderCommands(studies: Command): void {
         for (const idx of indicesToCalc) {
           const surface = surfaces[idx];
           if (!surface) continue;
-          // Get coordinates from surface center or study location
-          const center = surface.center as { lat: number; lng: number } | undefined;
-          const studyLocation = study.location as { lat: number; lng: number } | undefined;
-          const lat = center?.lat || studyLocation?.lat;
-          const lng = center?.lng || studyLocation?.lng;
-          if (!lat || !lng) {
+          // Coordinates: surface center → study location → drawn polygon (centroid, else first point)
+          const coords = resolveSurfaceCoordinates(surface, study);
+          if (!coords) {
             outputError(new Error(`Surface ${idx} has no coordinates. Use: studies add surface --lat N --lon N`));
             continue;
           }
+          const { lat, lng } = coords;
           const body = {
             lat,
             long: lng,
@@ -1630,7 +1679,7 @@ export function registerStudyBuilderCommands(studies: Command): void {
                   (surface.panelInclination as number) || 0,
                   (surface.inclination as number) || 0,
                   (surface.panelPosition as string) || 'vertical',
-                  ((surface.polygonPath as any)?.[0]?.lat as number) || 37,
+                  resolveSurfaceCoordinates(surface, study)?.lat ?? 37,
                 );
               } else {
                 // No area constraint — unlimited
@@ -1765,7 +1814,7 @@ export function registerStudyBuilderCommands(studies: Command): void {
                 (surface.panelInclination as number) || 0,
                 (surface.inclination as number) || 0,
                 (surface.panelPosition as string) || 'vertical',
-                ((surface.polygonPath as any)?.[0]?.lat as number) || 37,
+                resolveSurfaceCoordinates(surface, study)?.lat ?? 37,
               );
               surfacesMaxPeakPower[sid] = (maxPanels * panelPeakPower) / 1000;
             } else {
