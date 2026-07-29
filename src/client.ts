@@ -72,6 +72,33 @@ export function createUnauthClient(baseURL: string): AxiosInstance {
   });
 }
 
+/** A MongoDB ObjectId serializes to exactly 24 hexadecimal characters. */
+const OBJECT_ID_RE = /^[a-f0-9]{24}$/i;
+
+/**
+ * Guards a solar-study `_id` argument before it reaches the backend.
+ *
+ * `GET /solar-study/findById/:_id` runs `solarStudyModel.findOne({ _id })`,
+ * which makes Mongoose cast the value to an ObjectId. A non-ObjectId string
+ * (e.g. a UUID like a chat/shareable uid) throws a `CastError` server-side and
+ * surfaces as an opaque **HTTP 500**, so the caller gets no hint about what
+ * went wrong. Every real study `_id` is a 24-hex ObjectId, so we can reject
+ * bad ids client-side with an actionable message instead.
+ *
+ * Throws so the caller's try/catch surfaces it via `outputError` (exit != 0).
+ */
+export function assertStudyObjectId(id: string): string {
+  if (OBJECT_ID_RE.test(id)) return id;
+  const looksLikeUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id);
+  const hint = looksLikeUuid
+    ? `It looks like a UUID (e.g. a chat or shareable uid), not a study _id.`
+    : `A study _id is a 24-character hex MongoDB ObjectId.`;
+  throw new Error(
+    `Invalid study id: "${id}". ${hint} ` +
+      `Get the correct id from \`suntropy studies list\` (the \`solarStudyId\` field).`,
+  );
+}
+
 /**
  * Validates that an API response body actually contains an entity.
  *

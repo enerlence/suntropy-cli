@@ -1,7 +1,7 @@
 import { Command, Option } from 'commander';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { v4 } from 'uuid';
-import { createServiceClient, handleApiError, assertFound } from '../../client.js';
+import { createServiceClient, handleApiError, assertFound, assertStudyObjectId } from '../../client.js';
 import { loadConfig, getActiveProfile } from '../../config.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
@@ -572,6 +572,7 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .option('--file <path>', 'Output file path')
     .action(async (studyId, opts) => {
       try {
+        assertStudyObjectId(studyId);
         const filePath = resolveFile(opts);
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
@@ -2089,6 +2090,7 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .addOption(new Option('--reply-to-name <name>').hideHelp())
     .action(async (studyId, opts) => {
       try {
+        assertStudyObjectId(studyId);
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
         const comment = createComment('commented', opts.content, {
