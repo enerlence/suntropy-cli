@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError, assertFound } from '../../client.js';
+import { createServiceClient, handleApiError, assertFound, assertStudyObjectId } from '../../client.js';
 import { output, outputError, outputPaginated, type OutputOptions } from '../../output.js';
 import { registerStudyBuilderCommands } from './builder.js';
 
@@ -202,6 +202,9 @@ export function registerStudiesCommands(program: Command): void {
     .option('--by-study-id', 'Interpret <id> as MongoDB solarStudyId instead of metadata ID')
     .action(async (id, opts) => {
       try {
+        // --by-study-id resolves against the MongoDB solarStudyId, so guard it
+        // the same way as `get`; the default path uses a numeric metadata id.
+        if (opts.byStudyId) assertStudyObjectId(id);
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
         const path = opts.byStudyId
@@ -229,6 +232,7 @@ export function registerStudiesCommands(program: Command): void {
     .option('--expand <sections>', 'Comma-separated sections to expand (or "all")')
     .action(async (studyId, opts) => {
       try {
+        assertStudyObjectId(studyId);
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
         const res = await client.get(`/solar-study/findById/${studyId}`);
@@ -271,6 +275,7 @@ export function registerStudiesCommands(program: Command): void {
     .option('--save <file>', 'Save curve data to file')
     .action(async (studyId, curveName, opts) => {
       try {
+        assertStudyObjectId(studyId);
         const global = getGlobalOpts(studies);
         const client = createServiceClient('solar', global);
         const res = await client.get(`/solar-study/findById/${studyId}`);
