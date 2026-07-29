@@ -1,6 +1,7 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { createServiceClient, handleApiError, assertStudyObjectId } from '../../client.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
+import { loadConfig, getActiveProfile } from '../../config.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
   let root = cmd;
@@ -57,8 +58,13 @@ export function registerNotificationsCommands(program: Command): void {
     .option('--link <url>', 'Custom link for the email call-to-action')
     .option(
       '--from-user <userUID>',
-      `Sender userUID shown as the author (default: ${ALEXANDRIA_USER_UID})`,
+      'Sender userUID shown as the author (default: the authenticated user)',
     )
+    // Hidden flag mirroring `studies comment --as-alexandria`: signs the
+    // notification as Alexandria (fromUserUid = "alexandria", which the front
+    // resolves to Alexandria's name/avatar). Omitted from --help; the agent is
+    // instructed to use it. `--from-user` still takes precedence if provided.
+    .addOption(new Option('--as-alexandria').hideHelp())
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(notifications);
@@ -75,11 +81,21 @@ export function registerNotificationsCommands(program: Command): void {
 
         const client = createServiceClient('notifications', global);
 
+        // Sender identity: explicit --from-user wins; else --as-alexandria signs
+        // it as Alexandria; else fall back to the authenticated user (a plain
+        // user-to-user notification).
+        const profile = getActiveProfile(loadConfig());
+        const fromUserUid = opts.fromUser
+          ? opts.fromUser
+          : opts.asAlexandria
+            ? ALEXANDRIA_USER_UID
+            : profile.userUID;
+
         const notification = {
           notificationType: opts.mention ? 'new_mention' : 'new_comment',
           severity,
-          origin: 'ALEXANDRIA',
-          fromUserUid: opts.fromUser || ALEXANDRIA_USER_UID,
+          origin: opts.asAlexandria ? 'ALEXANDRIA' : 'CLI',
+          fromUserUid,
           toUserUid: opts.toUser,
           notificationContent: {
             contentType: 'COMMENT',
