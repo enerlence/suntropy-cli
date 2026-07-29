@@ -10,6 +10,7 @@ import { registerPPACommands } from './commands/ppa/index.js';
 import { registerShareableCommands } from './commands/shareables/index.js';
 import { registerTemplatesCommands } from './commands/templates/index.js';
 import { registerGeocodeCommands } from './commands/geocode/index.js';
+import { registerNotificationsCommands } from './commands/notifications/index.js';
 import { registerCommandProfileCommand } from './commands/command-profile.js';
 import { applyCommandProfile } from './access.js';
 
@@ -45,6 +46,7 @@ export function createProgram(): Command {
   registerShareableCommands(program);
   registerTemplatesCommands(program);
   registerGeocodeCommands(program);
+  registerNotificationsCommands(program);
 
   // Hidden admin command to manage the command access profile. Registered last
   // and always exempt from gating, so it can raise/lower the tier from any tier.
