@@ -88,7 +88,7 @@ const DELETE_VERBS = new Set(['delete', 'delete-batch', 'archive']);
 
 const WRITE_VERBS = new Set([
   'create', 'update', 'edit', 'set', 'add', 'remove', 'assemble', 'featured',
-  'save', 'init', 'init-default', 'add-comment', 'comment',
+  'save', 'init', 'init-default', 'add-comment', 'comment', 'send',
   'calculate-results', 'optimize-peakpower',
 ]);
 

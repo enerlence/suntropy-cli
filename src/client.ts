@@ -29,7 +29,7 @@ function resolveAuth(opts: ClientOptions): { server: string; token: string } {
   return { server, token };
 }
 
-export function createServiceClient(service: 'security' | 'solar' | 'templates' | 'profiles' | 'periods', opts: ClientOptions): AxiosInstance {
+export function createServiceClient(service: 'security' | 'solar' | 'templates' | 'profiles' | 'periods' | 'notifications', opts: ClientOptions): AxiosInstance {
   const { server, token } = resolveAuth(opts);
   const baseURL = getServiceUrl(server, service);
 
