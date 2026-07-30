@@ -103,6 +103,15 @@ export function registerNotificationsCommands(program: Command): void {
             description: opts.message,
             ...(opts.study ? { externalId: opts.study } : {}),
             ...(opts.link ? { link: opts.link } : {}),
+            // The notifications backend only persists notificationContent when a
+            // `data` payload is present (the OneToOne isn't cascaded), so without
+            // this the notification renders blank in the bell. Always send a
+            // small data object; harmless once the backend also persists content
+            // without it. Not read by the front for these types.
+            data: {
+              source: opts.asAlexandria ? 'alexandria' : 'cli',
+              ...(opts.study ? { studyId: opts.study } : {}),
+            },
           },
         };
 
