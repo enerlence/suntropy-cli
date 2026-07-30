@@ -1,6 +1,6 @@
 {
   "name": "@enerlence/suntropy-cli",
-  "version": "0.11.6",
+  "version": "0.11.7",
   "description": "Agent-first CLI for Suntropy solar platform",
   "type": "module",
   "bin": {
