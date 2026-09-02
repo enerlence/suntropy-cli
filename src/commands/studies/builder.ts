@@ -2161,7 +2161,7 @@ async function generateFromProfile(
 
   // 2. Import energy-types
   const { applyProfileToConsumption, ConsumptionIntroductionModes } =
-    await import('energy-types/lib/energy/calculations/applyProfileToConsumption');
+    await import('energy-types/lib/energy/calculations/applyProfileToConsumption.js');
 
   if (mode === 'CONSUMPTION_BY_PERIOD') {
     // Need period distribution
