@@ -151,7 +151,13 @@ export function createResourceCommands(cfg: ResourceConfig): Command {
         const client = createServiceClient(service, global);
         const body = parseData(opts.data);
         if (cfg.putBodyOnly) {
-          const res = await client.put(cfg.basePath, { ...body, [cfg.idField]: id });
+          // The id goes in the body for these resources; send it as a number so
+          // TypeORM matches the integer primary key on the other side.
+          const numericId = Number(id);
+          const res = await client.put(cfg.basePath, {
+            ...body,
+            [cfg.idField]: Number.isFinite(numericId) ? numericId : id,
+          });
           output(res.data, global);
         } else {
           const res = await client.put(`${cfg.basePath}/${id}`, body);
