@@ -312,6 +312,44 @@ function updateStudy(
   };
 }
 
+/**
+ * Spreads a total panel count over the study surfaces, keeping the current
+ * proportion between them (equal split when none of them has a count yet).
+ * Any remainder from the rounding goes to the largest surface.
+ *
+ * `--panels-count` used to write the whole figure into `surfaces[0]`, which on a
+ * multi-surface study silently added panels instead of setting the total: a
+ * 24 + 24 roof asked for 48 ended up with 48 + 24 = 72.
+ */
+function distributePanels(
+  surfaces: Record<string, unknown>[],
+  total: number,
+): number[] {
+  if (!surfaces.length) return [];
+  if (surfaces.length === 1) return [total];
+
+  const current = surfaces.map((s) => Number(s.panelNumber) || 0);
+  const currentTotal = current.reduce((a, b) => a + b, 0);
+  const weights = currentTotal > 0
+    ? current.map((n) => n / currentTotal)
+    : surfaces.map(() => 1 / surfaces.length);
+
+  const counts = weights.map((w) => Math.floor(total * w));
+  let remainder = total - counts.reduce((a, b) => a + b, 0);
+
+  // Hand the leftovers out one by one, largest surface first.
+  const order = counts
+    .map((n, i) => ({ n, i }))
+    .sort((a, b) => b.n - a.n)
+    .map((x) => x.i);
+  for (let k = 0; remainder > 0; k = (k + 1) % order.length) {
+    counts[order[k]] += 1;
+    remainder -= 1;
+  }
+
+  return counts;
+}
+
 /** Deep merge: target ← source (non-destructive, arrays replaced not merged) */
 function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
   for (const key of Object.keys(source)) {
@@ -995,11 +1033,15 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .description(
       'Set solar panel for the study. Auto-sets peakPowerIntroductionMode to "solarPanel".\n' +
       'Fetches full panel data from inventory.\n' +
+      '--panels-count is the TOTAL for the study: it is spread over the surfaces keeping\n' +
+      'their current proportion (use --surface-index to target a single surface).\n' +
+      'The response lists the resulting panelNumber per surface.\n' +
       'Example: suntropy studies set panel --file study.json --panel-id 456 --panels-count 12'
     )
     .option('--file <path>', 'Study file path')
     .requiredOption('--panel-id <n>', 'Solar panel ID from inventory')
-    .option('--panels-count <n>', 'Number of panels')
+    .option('--panels-count <n>', 'TOTAL number of panels of the study, spread over its surfaces keeping their current proportion')
+    .option('--surface-index <n>', 'Apply --panels-count to this surface only (0-based) instead of spreading it')
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(studies);
@@ -1009,21 +1051,39 @@ export function registerStudyBuilderCommands(studies: Command): void {
         const panelRes = await solarClient.get(`/solar-panels/${opts.panelId}`);
         const panel = panelRes.data;
 
+        let distribution: { surfaceIndex: number; panelNumber: number }[] = [];
         const result = updateStudy(resolveFile(opts), (study) => {
           study.solarPanel = panel;
           study.peakPowerIntroductionMode = 'solarPanel';
           // Clear kit when switching to panel mode
           study.solarKit = undefined;
           if (opts.panelsCount) {
-            // Set panels count on first surface if exists
             const surfaces = study.surfaces as Record<string, unknown>[] | undefined;
+            const total = parseInt(opts.panelsCount);
             if (surfaces?.length) {
-              surfaces[0].panelNumber = parseInt(opts.panelsCount);
+              if (opts.surfaceIndex !== undefined) {
+                const idx = parseInt(opts.surfaceIndex);
+                if (!Number.isInteger(idx) || idx < 0 || idx >= surfaces.length) {
+                  throw new Error(
+                    `--surface-index ${opts.surfaceIndex} is out of range: the study has ${surfaces.length} surface(s)`
+                  );
+                }
+                surfaces[idx].panelNumber = total;
+              } else {
+                const counts = distributePanels(surfaces, total);
+                surfaces.forEach((surface, i) => { surface.panelNumber = counts[i]; });
+              }
+              distribution = surfaces.map((surface, i) => ({
+                surfaceIndex: i,
+                panelNumber: Number(surface.panelNumber) || 0,
+              }));
             }
           }
           return undefined;
         });
-        output(result, global);
+        // Report what each surface ended up with: a caller that assumes the
+        // total landed where it asked would otherwise misreport the peak power.
+        output(distribution.length ? { ...result, surfaces: distribution } : result, global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -1075,7 +1135,10 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .command('inverter')
     .description(
       'Set inverter(s) for the study (when using solarPanel mode).\n' +
-      'Example: suntropy studies set inverter --file study.json --inverter-id 789'
+      'REPLACES the whole list: pass every inverter of the installation, comma-separated,\n' +
+      'repeating an id as many times as units there are. The response reports how many\n' +
+      'were there before and how many are there now.\n' +
+      'Example: suntropy studies set inverter --file study.json --inverter-id 789,789'
     )
     .option('--file <path>', 'Study file path')
     .requiredOption('--inverter-id <ids>', 'Inverter ID(s), comma-separated for multiple')
@@ -1091,11 +1154,15 @@ export function registerStudyBuilderCommands(studies: Command): void {
           inverters.push(res.data);
         }
 
+        let previousCount = 0;
         const result = updateStudy(resolveFile(opts), (study) => {
+          previousCount = (study.solarInverters as unknown[] | undefined)?.length ?? 0;
           study.solarInverters = inverters;
           return undefined;
         });
-        output(result, global);
+        // The list is replaced, not appended: say so, because dropping units
+        // silently undersizes the installation and its budget.
+        output({ ...result, inverters: { before: previousCount, after: inverters.length } }, global);
       } catch (err) {
         outputError(handleApiError(err));
       }
