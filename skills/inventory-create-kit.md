@@ -37,7 +37,7 @@ Campos disponibles: name, peakPower, efficiency, panelDegradation, technology, w
 ```bash
 suntropy inventory kits inverters create --data '{
   "name": "Inversor Kit 5kW",
-  "nominalPower": 5000,
+  "nominalPower": 5,
   "efficiency": 98.4,
   "isMicroinverter": false,
   "costPerUnit": 800,

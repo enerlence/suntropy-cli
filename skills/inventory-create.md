@@ -4,6 +4,25 @@ Crea elementos en el inventario de Suntropy usando la CLI. El inventario incluye
 
 Pregunta al usuario qué tipo de elemento quiere crear. Si no especifica, pregunta.
 
+## Unidades de potencia — léelo antes de crear nada
+
+Suntropy guarda **todas las potencias de equipo en kW**, con una única excepción: el
+`peakPower` de los paneles, que va en **Wp**. Las fichas técnicas dan casi siempre
+vatios, así que hay que convertir antes de escribir:
+
+| Campo | Elemento | Unidad | Ficha dice 5000 W → escribe |
+|-------|----------|--------|------------------------------|
+| `peakPower` | paneles (y paneles de kit) | **Wp** | `5000` |
+| `nominalPower` | inversores (y inversores de kit) | **kW** | `5` |
+| `maxPower` | cargadores VE | **kW** | `5` |
+| `lowerPower` / `upperPower` | aerotermias | **kW** | `5` |
+| `capacity` | baterías | **kWh** | — |
+| `maxCapacityOfBattery` | inversores | **kWh** | — |
+
+Un inversor creado con `nominalPower: 5000` queda registrado como **5000 kW = 5 MW**:
+no aparecerá nunca en la recomendación de inversores (que compara `nominalPower`
+contra la potencia pico en kWp) y en el inventario se leerá como megavatios.
+
 ## Tipos de elementos y sus campos
 
 ### Paneles solares (`suntropy inventory panels create`)
@@ -29,7 +48,7 @@ suntropy inventory panels create --data '{"name":"JA Solar 450W","peakPower":450
 | Campo | Tipo | Obligatorio | Ejemplo |
 |-------|------|-------------|---------|
 | name | string | Sí | "Huawei SUN2000-5KTL" |
-| nominalPower | number | Sí | 5000 (W) |
+| nominalPower | number | Sí | 5 (**kW**, no W) |
 | efficiency | number | No | 98.4 (%) |
 | manufacturer | object | No | {"idManufacturer": N} |
 | phaseNumber | string | No | "single_phase" o "three_phase" |
@@ -40,7 +59,7 @@ suntropy inventory panels create --data '{"name":"JA Solar 450W","peakPower":450
 | active | boolean | No | true |
 
 ```bash
-suntropy inventory inverters create --data '{"name":"Huawei SUN2000-5KTL","nominalPower":5000,"efficiency":98.4,"phaseNumber":"single_phase","costPerUnit":800}'
+suntropy inventory inverters create --data '{"name":"Huawei SUN2000-5KTL","nominalPower":5,"efficiency":98.4,"phaseNumber":"single_phase","costPerUnit":800}'
 ```
 
 ### Baterías (`suntropy inventory batteries create`)
@@ -64,7 +83,7 @@ suntropy inventory batteries create --data '{"name":"Huawei LUNA2000-5","capacit
 | Campo | Tipo | Obligatorio | Ejemplo |
 |-------|------|-------------|---------|
 | name | string | Sí | "Wallbox Pulsar Plus" |
-| maxPower | number | Sí | 7400 (W) |
+| maxPower | number | Sí | 7.4 (**kW**, no W) |
 | connectorType | string | No | TYPE_1, TYPE_2, CCS1, CCS2, GBT, CHAdeMO |
 | phaseNumber | number | No | 1 |
 | includedPlug | boolean | No | true |
@@ -73,15 +92,15 @@ suntropy inventory batteries create --data '{"name":"Huawei LUNA2000-5","capacit
 | active | boolean | No | true |
 
 ```bash
-suntropy inventory chargers create --data '{"name":"Wallbox Pulsar Plus","maxPower":7400,"connectorType":"TYPE_2","costPerUnit":650}'
+suntropy inventory chargers create --data '{"name":"Wallbox Pulsar Plus","maxPower":7.4,"connectorType":"TYPE_2","costPerUnit":650}'
 ```
 
 ### Aerotermias (`suntropy inventory heatpumps create`)
 | Campo | Tipo | Obligatorio | Ejemplo |
 |-------|------|-------------|---------|
 | identifier | string | Sí | "Daikin Altherma 3 8kW" |
-| lowerPower | number | No | 4000 (W) |
-| upperPower | number | No | 8000 (W) |
+| lowerPower | number | No | 4 (**kW**, no W) |
+| upperPower | number | No | 8 (**kW**, no W) |
 | scop | number | No | 4.5 |
 | phases_number | number | No | 1 |
 | manufacturer | object | No | {"idManufacturer": N} |
@@ -90,7 +109,7 @@ suntropy inventory chargers create --data '{"name":"Wallbox Pulsar Plus","maxPow
 | active | boolean | No | true |
 
 ```bash
-suntropy inventory heatpumps create --data '{"identifier":"Daikin Altherma 3 8kW","lowerPower":4000,"upperPower":8000,"scop":4.5,"costPerUnit":4500}'
+suntropy inventory heatpumps create --data '{"identifier":"Daikin Altherma 3 8kW","lowerPower":4,"upperPower":8,"scop":4.5,"costPerUnit":4500}'
 ```
 
 ### Equipos personalizados (Custom Assets)
@@ -190,7 +209,7 @@ Resumen rápido de un kit solar básico:
 ```bash
 # 1. Crear panel y inversor del kit
 suntropy inventory kits panels create --data '{"name":"Panel Kit","peakPower":450,"efficiency":21}'
-suntropy inventory kits inverters create --data '{"name":"Inversor Kit","nominalPower":5000}'
+suntropy inventory kits inverters create --data '{"name":"Inversor Kit","nominalPower":5}'
 
 # 2. Ensamblar el kit (método recomendado)
 suntropy inventory kits assemble \
