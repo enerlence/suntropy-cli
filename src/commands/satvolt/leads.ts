@@ -57,7 +57,9 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
           },
         });
         const outOpts = { ...global, fields: global.fields ?? (global.format !== 'json' ? LEAD_LIST_FIELDS : undefined) };
-        outputPaginated(page.items, page.total, page.limit, page.offset, outOpts);
+        // CSV: solo las filas (el sobre paginado no se puede aplanar).
+        if (outOpts.format === 'csv') output(page.items, outOpts);
+        else outputPaginated(page.items, page.total, page.limit, page.offset, outOpts);
       } catch (err) {
         outputError(satvoltError(err));
       }
@@ -82,6 +84,73 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
           'get',
           `/campaigns/${parseId(campaignId, 'campaignId')}/leads/${parseId(leadId, 'leadId')}`,
           { params: { fullData } },
+        );
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  leads
+    .command('full-data <campaignId> <leadId>')
+    .summary('Only the enriched data of a lead (all, some keys or one path).')
+    .description(
+      'Print only the enriched data (fullData) of a lead, optionally a subset of keys or a\n' +
+        'single nested path.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt leads full-data 62 2078\n' +
+        '  suntropy satvolt leads full-data 62 2078 --keys consumptionEstimate,cif\n' +
+        '  suntropy satvolt leads full-data 62 2078 --path cif.response.extras.cnae',
+    )
+    .option('--keys <keys>', 'Comma-separated top-level keys')
+    .option('--path <dotted.path>', 'Return the value at this path inside fullData')
+    .action(async (campaignId, leadId, opts) => {
+      const global = getGlobalOpts(leads);
+      try {
+        const topKey = opts.path ? String(opts.path).split('.')[0] : undefined;
+        const data = await call(
+          satvoltClient(global),
+          'get',
+          `/campaigns/${parseId(campaignId, 'campaignId')}/leads/${parseId(leadId, 'leadId')}`,
+          { params: { fullData: topKey ?? opts.keys ?? 'true' } },
+        );
+        let value: unknown = data.fullData ?? {};
+        if (opts.path) {
+          for (const part of String(opts.path).split('.')) {
+            value = value && typeof value === 'object' ? (value as Record<string, unknown>)[part] : undefined;
+          }
+          if (value === undefined) throw new Error(`Path "${opts.path}" not found in the fullData of lead ${leadId}`);
+        }
+        output(value, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  leads
+    .command('run-step <campaignId> <leadId> <step>')
+    .summary('Run one pipeline step on a single lead (only that step, or --continue).')
+    .description(
+      'Run one pipeline step (uid, or action if it appears once) on a single lead, through\n' +
+        'the same queue as the pipeline. Spends the credits of that step.\n' +
+        '  default       only that step: later steps are not queued and a completed or\n' +
+        '                unqualified lead keeps its state (except when re-running QUALIFY)\n' +
+        '  --continue    continue the pipeline from that step (later steps run again)\n' +
+        '  --force       skip the check that the lead completed the step dependencies\n' +
+        'Examples:\n' +
+        '  suntropy satvolt leads run-step 62 2034 ESTIMATE_CONSUMPTION\n' +
+        '  suntropy satvolt leads run-step 62 2081 f8771dae3f963702 --continue',
+    )
+    .option('--continue', 'Continue the pipeline after the step')
+    .option('--force', 'Run even if the lead has not completed the step dependencies')
+    .action(async (campaignId, leadId, step, opts) => {
+      const global = getGlobalOpts(leads);
+      try {
+        const data = await call(
+          satvoltClient(global),
+          'post',
+          `/campaigns/${parseId(campaignId, 'campaignId')}/leads/${parseId(leadId, 'leadId')}/steps/${encodeURIComponent(step)}/run`,
+          { data: { mode: opts.continue ? 'continue' : 'only', force: opts.force === true } },
         );
         output(data, global);
       } catch (err) {

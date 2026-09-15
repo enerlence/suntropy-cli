@@ -82,7 +82,9 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
           params: { limit: opts.limit, offset: opts.offset, search: opts.search, state: opts.state, source: opts.source },
         });
         const outOpts = { ...global, fields: global.fields ?? (global.format !== 'json' ? CAMPAIGN_LIST_FIELDS : undefined) };
-        outputPaginated(page.items, page.total, page.limit, page.offset, outOpts);
+        // CSV: solo las filas (el sobre paginado no se puede aplanar).
+        if (outOpts.format === 'csv') output(page.items, outOpts);
+        else outputPaginated(page.items, page.total, page.limit, page.offset, outOpts);
       } catch (err) {
         outputError(satvoltError(err));
       }
@@ -105,6 +107,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
   // --- create ---
   campaigns
     .command('create')
+    .summary('Create a Maps campaign over an area, optionally from a template or campaign.')
     .description(
       'Create a Maps campaign over an area. It stays queued unless --start is passed\n' +
         '(same as the web app). Steps are the LEAD steps only: SECTORIZE, FIND_LEADS\n' +
@@ -120,9 +123,18 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         '    --business-groups businesses --steps @steps.json\n' +
         '  suntropy satvolt campaigns create --name "Test" --bounds 40.45,-3.70,40.44,-3.68 \\\n' +
         '    --steps \'[{"action":"FIND_ROOFTOP"},{"action":"SOLAR_ANALYSIS"}]\' --start\n' +
-        '  suntropy satvolt campaigns create --data @campaign.json   (full request body)',
+        '  suntropy satvolt campaigns create --data @campaign.json   (full request body)\n\n' +
+        'Base configuration (optional, one of them): steps, business groups, description,\n' +
+        'search query and lead limit come from it; any flag you pass wins.\n' +
+        '  --template <id|name>     a campaign template (see: satvolt templates list)\n' +
+        '  --from-campaign <id>     copy the pipeline of another Maps campaign\n' +
+        '  suntropy satvolt campaigns create --name "Sonda Huévar" --template "Greenvolt industria" \\\n' +
+        '    --circle 37.3509,-6.2757 --radius 5000 --max-leads 50',
     )
     .option('--name <name>', 'Campaign name')
+    .option('--template <idOrName>', 'Base the campaign on a campaign template')
+    .option('--from-campaign <id>', 'Base the campaign on the configuration of another Maps campaign')
+    .option('--description <text>', 'Natural language description of the configuration')
     .option('--circle <lat,lng>', 'Circle center')
     .option('--radius <meters>', 'Circle radius in meters')
     .option('--bounds <nwLat,nwLng,seLat,seLng>', 'Rectangle corners')
@@ -145,6 +157,10 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         }
         if (!body.name) throw new Error('--name is required');
         if (!body.area) throw new Error('An area is required: --circle/--radius, --bounds or --polygon');
+        if (opts.template && opts.fromCampaign) throw new Error('Use either --template or --from-campaign, not both');
+        if (opts.template) body.templateId = opts.template;
+        if (opts.fromCampaign) body.fromCampaignId = parseId(opts.fromCampaign, '--from-campaign');
+        if (opts.description !== undefined) body.description = opts.description;
         if (opts.searchQuery) body.searchQuery = opts.searchQuery;
         if (opts.maxLeads !== undefined) body.maxLeads = parseIntOption(opts.maxLeads, '--max-leads');
         if (opts.businessGroups) body.businessGroups = opts.businessGroups.split(',').map((s: string) => s.trim()).filter(Boolean);
@@ -154,6 +170,28 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         if (opts.start) body.start = true;
 
         const data = await call(satvoltClient(global), 'post', '/campaigns', { data: body });
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  // --- delete ---
+  campaigns
+    .command('delete <campaignId>')
+    .summary('Delete a campaign and everything it generated (irreversible, --yes).')
+    .description(
+      'Delete a campaign with its sectors, leads, step executions, pipeline configuration\n' +
+        'and queued jobs. Irreversible. Export tables of the campaign stop working.\n' +
+        'Example:\n' +
+        '  suntropy satvolt campaigns delete 63 --yes',
+    )
+    .option('--yes', 'Confirm the deletion (required)')
+    .action(async (campaignId, opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        if (!opts.yes) throw new Error('Deleting a campaign is irreversible. Re-run with --yes to confirm.');
+        const data = await call(satvoltClient(global), 'delete', `/campaigns/${parseId(campaignId, 'campaignId')}`);
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
@@ -177,6 +215,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
   // --- reset ---
   campaigns
     .command('reset <campaignId>')
+    .summary('Relaunch a campaign from scratch: deletes its leads and results (--yes).')
     .description(
       'Relaunch a campaign from scratch: deletes its sectors, leads and processing data\n' +
         'and returns it to queued, keeping the configuration. Excel/campaign-sourced\n' +
@@ -202,6 +241,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
   // --- extend ---
   campaigns
     .command('extend <campaignId>')
+    .summary('Get more leads from a finished Maps campaign without relaunching it.')
     .description(
       'Get more leads from a finished Maps campaign without relaunching it: raises (or\n' +
         'removes) its lead limit and searches again only in the sectors whose search was\n' +
@@ -235,6 +275,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
   // --- resume ---
   campaigns
     .command('resume <campaignId>')
+    .summary('Append a new step at the end and run it over the existing leads.')
     .description(
       'Resume a finished campaign from a NEW step: appends it at the end of the pipeline\n' +
         '(before COMPLETE) and runs it over the existing leads that reached the previous\n' +

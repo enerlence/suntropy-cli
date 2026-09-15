@@ -5,6 +5,7 @@ import { registerSatvoltCampaignCommands } from './campaigns.js';
 import { registerSatvoltPipelineCommands } from './pipeline.js';
 import { registerSatvoltLeadCommands } from './leads.js';
 import { registerSatvoltExportTableCommands } from './export-tables.js';
+import { registerSatvoltTemplateCommands } from './templates.js';
 
 export function registerSatvoltCommands(program: Command): void {
   const satvolt = program
@@ -17,13 +18,16 @@ export function registerSatvoltCommands(program: Command): void {
         '  satvolt campaigns start <id>   ·   satvolt campaigns logs <id> --follow\n' +
         '  satvolt campaigns funnel <id>  ·   satvolt leads list <id> --step QUALIFY\n' +
         '  satvolt export-tables create <id> ... · satvolt export-tables export <tableId>\n' +
-        '  satvolt campaigns resume <id> --action AI_AGENT --config @step.json',
+        '  satvolt campaigns resume <id> --action AI_AGENT --config @step.json\n' +
+        '  satvolt templates create --name <n> --from-campaign <id> · campaigns create --template <n>\n' +
+        '  satvolt campaigns extend <id> --max-leads N · leads run-step <id> <leadId> <step>',
     );
 
   registerSatvoltCampaignCommands(satvolt);
   registerSatvoltPipelineCommands(satvolt);
   registerSatvoltLeadCommands(satvolt);
   registerSatvoltExportTableCommands(satvolt);
+  registerSatvoltTemplateCommands(satvolt);
 
   const catalog = satvolt
     .command('catalog')
@@ -47,5 +51,23 @@ export function registerSatvoltCommands(program: Command): void {
           outputError(satvoltError(err));
         }
       });
+  }
+
+  addSummaries(satvolt);
+}
+
+/**
+ * Commander lists subcommands with their whole description, so multi-line ones
+ * (with examples) break the command list. Use the first line as the summary
+ * when a command does not set one.
+ */
+function addSummaries(cmd: Command): void {
+  for (const sub of cmd.commands) {
+    const description = sub.description();
+    if (!sub.summary() && description.includes('\n')) {
+      const first = description.split('\n')[0].trim();
+      sub.summary(/[.:)]$/.test(first) ? first.replace(/:$/, '.') : `${first}…`);
+    }
+    addSummaries(sub);
   }
 }

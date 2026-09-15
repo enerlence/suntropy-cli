@@ -209,7 +209,9 @@ export function registerSatvoltExportTableCommands(satvolt: Command): void {
           for (const c of columns) row[c.label] = r.values[c.id] ?? null;
           return row;
         });
-        outputPaginated(rows, page.total, page.limit, page.offset, global);
+        // CSV: solo las filas (el sobre paginado no se puede aplanar).
+        if (global.format === 'csv') output(rows, global);
+        else outputPaginated(rows, page.total, page.limit, page.offset, global);
       } catch (err) {
         outputError(satvoltError(err));
       }
