@@ -6,10 +6,12 @@ import {
   call,
   getGlobalOpts,
   parseId,
+  parseIntOption,
   readJsonArg,
   satvoltClient,
   satvoltError,
 } from './api.js';
+import { registerFieldsCommand } from './fields.js';
 
 interface Column {
   id: string;
@@ -20,7 +22,8 @@ interface Column {
 
 /**
  * Columns can be given as full objects or as shorthand strings
- * "Label=path[:type]" (e.g. "CIF=fullData.webData.tax_id").
+ * "Label=path[:type]" (e.g. "CIF=fullData.webData.tax_id"). Without a type
+ * the server uses the one the pipeline step declares for that path, or string.
  */
 function parseColumns(value: string): unknown[] {
   const trimmed = value.trim();
@@ -32,7 +35,7 @@ function parseColumns(value: string): unknown[] {
   return trimmed.split(';').map((part) => {
     const m = /^(.+?)=([^:]+)(?::(string|number|boolean|date|url))?$/.exec(part.trim());
     if (!m) throw new Error(`Invalid column "${part}". Use "Label=path[:type]" separated by ";" or a JSON array`);
-    return { label: m[1].trim(), path: m[2].trim(), type: m[3] ?? 'string' };
+    return { label: m[1].trim(), path: m[2].trim(), ...(m[3] ? { type: m[3] } : {}) };
   });
 }
 
@@ -42,9 +45,11 @@ export function registerSatvoltExportTableCommands(satvolt: Command): void {
     .summary('Export tables: column sets over lead data, paged reads and XLSX/CSV downloads.')
     .description(
       'Export tables of a campaign: named column sets over lead data, readable page by page\n' +
-        'and downloadable as XLSX or CSV. Column paths: lead.<column>, fullData.<path>,\n' +
-        'synthetic.googleMapsUrl (see: satvolt leads fields <campaignId>).',
+        'and downloadable as XLSX or CSV. Column paths: lead.<column>, fullData.<path> and\n' +
+        'synthetic.googleMapsUrl. `export-tables fields <campaignId>` lists them by pipeline step.',
     );
+
+  registerFieldsCommand(tables, 'Same as `satvolt leads fields`.');
 
   tables
     .command('list <campaignId>')
@@ -73,11 +78,18 @@ export function registerSatvoltExportTableCommands(satvolt: Command): void {
 
   tables
     .command('create <campaignId>')
+    .summary('Create an export table with its columns.')
     .description(
-      'Create an export table. Column ids are generated when omitted; type defaults to string.\n' +
+      'Create an export table. Column ids are generated when omitted. Without a type, the\n' +
+        'column takes the one declared by the step that writes the path, or string.\n' +
+        'Find paths with: suntropy satvolt export-tables fields <campaignId>\n' +
         'Examples:\n' +
         '  suntropy satvolt export-tables create 59 --name "CRM" \\\n' +
-        '    --columns "Empresa=lead.commercialName;CIF=fullData.webData.tax_id;Consumo kWh=fullData.consumptionEstimate.annualKwh:number;Maps=synthetic.googleMapsUrl:url"\n' +
+        '    --columns "Empresa=lead.commercialName;Web=lead.url;Consumo kWh=fullData.consumptionEstimate.annualKwh;Maps=synthetic.googleMapsUrl"\n' +
+        'fullData paths depend on the steps of each campaign (an AI agent with outputKey "cif"\n' +
+        'writes fullData.cif.response.<field>): take them from `export-tables fields`.\n' +
+        'Synthetic paths: synthetic.googleMapsUrl (Google Maps link built from the coordinates).\n' +
+        'The response is the table: { id, campaignId, name, description, columns, warnings }.\n' +
         '  suntropy satvolt export-tables create 59 --data @table.json   ({ name, description?, columns })',
     )
     .option('--name <name>', 'Table name')
@@ -122,41 +134,31 @@ export function registerSatvoltExportTableCommands(satvolt: Command): void {
 
   tables
     .command('patch <tableId>')
+    .summary('Change the name, description or the whole column list.')
     .description(
-      'Change only the given fields. --columns replaces the column list; use --add-columns\n' +
-        'to append and --remove-columns to drop by id or label.\n' +
+      'Change the name, the description or the whole column list. To add, edit, move or\n' +
+        'remove single columns use `export-tables columns`.\n' +
         'Example:\n' +
-        '  suntropy satvolt export-tables patch 6650... --add-columns "Teléfono=lead.phone" --remove-columns Maps',
+        '  suntropy satvolt export-tables patch 6650... --name "CRM v2"',
     )
     .option('--name <name>', 'New name')
     .option('--description <text>', 'New description')
-    .option('--columns <spec>', 'Replace columns: "Label=path[:type];..." or JSON')
-    .option('--add-columns <spec>', 'Append columns')
-    .option('--remove-columns <idsOrLabels>', 'Comma-separated column ids or labels to drop')
+    .option('--columns <spec>', 'Replace all columns: "Label=path[:type];..." or JSON')
     .action(async (tableId, opts) => {
       const global = getGlobalOpts(tables);
       try {
-        const client = satvoltClient(global);
         const body: Record<string, unknown> = {};
         if (opts.name) body.name = opts.name;
         if (opts.description !== undefined) body.description = opts.description;
         if (opts.columns) body.columns = parseColumns(opts.columns);
-        if (opts.addColumns || opts.removeColumns) {
-          if (opts.columns) throw new Error('--columns cannot be combined with --add-columns/--remove-columns');
-          const current = await call(client, 'get', `/export-tables/${tableId}`);
-          const drop = new Set<string>((opts.removeColumns ?? '').split(',').map((s: string) => s.trim()).filter(Boolean));
-          const kept = (current.columns as Column[]).filter((c) => !drop.has(c.id) && !drop.has(c.label));
-          if (drop.size && kept.length === current.columns.length) {
-            throw new Error(`No column matches --remove-columns ${opts.removeColumns}`);
-          }
-          body.columns = [...kept, ...(opts.addColumns ? parseColumns(opts.addColumns) : [])];
-        }
         if (Object.keys(body).length === 0) throw new Error('Nothing to change');
-        output(await call(client, 'patch', `/export-tables/${tableId}`, { data: body }), global);
+        output(await call(satvoltClient(global), 'patch', `/export-tables/${tableId}`, { data: body }), global);
       } catch (err) {
         outputError(satvoltError(err));
       }
     });
+
+  registerColumnCommands(tables);
 
   tables
     .command('delete <tableId>')
@@ -250,6 +252,227 @@ export function registerSatvoltExportTableCommands(satvolt: Command): void {
           },
           global,
         );
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+}
+
+const normalizeLabel = (s: string) =>
+  s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+
+/** Column by id, or by label (ignoring case and accents) when no id matches. */
+function resolveColumn(columns: Column[], ref: string): Column {
+  const byId = columns.find((c) => c.id === ref);
+  if (byId) return byId;
+  const byLabel = columns.filter((c) => normalizeLabel(c.label) === normalizeLabel(ref));
+  if (byLabel.length === 1) return byLabel[0];
+  if (byLabel.length > 1) {
+    throw new Error(`Label "${ref}" matches several columns; use one of the ids: ${byLabel.map((c) => c.id).join(', ')}`);
+  }
+  throw new Error(
+    `No column "${ref}". Columns: ${columns.map((c) => `${c.id} (${c.label})`).join(', ') || '(none)'}`,
+  );
+}
+
+/**
+ * 0-based position for the API from --position, --before or --after. `moving`
+ * is the column being moved: positions count the other columns.
+ */
+function targetPosition(
+  columns: Column[],
+  opts: { position?: string; before?: string; after?: string },
+  moving?: Column,
+): number | undefined {
+  const given = [opts.position, opts.before, opts.after].filter((v) => v !== undefined).length;
+  if (given > 1) throw new Error('Use only one of --position, --before or --after');
+  if (opts.position !== undefined) return parseIntOption(opts.position, '--position');
+  const anchorRef = opts.before ?? opts.after;
+  if (anchorRef === undefined) return undefined;
+  const others = columns.filter((c) => c.id !== moving?.id);
+  const anchor = resolveColumn(others, anchorRef);
+  const index = others.findIndex((c) => c.id === anchor.id);
+  return opts.before !== undefined ? index : index + 1;
+}
+
+function registerColumnCommands(tables: Command): void {
+  const columns = tables
+    .command('columns')
+    .summary('Add, edit, move, reorder or remove single columns of an export table.')
+    .description(
+      'Edit one column at a time without resending the whole list. Columns are referenced\n' +
+        'by id or by label (case and accents ignored; if two share a label, use the id).\n' +
+        'Positions are 0-based (0 = first column). Each change returns { table, column, warnings }.\n' +
+        'Find paths with: suntropy satvolt export-tables fields <campaignId>',
+    );
+
+  const list = async (client: ReturnType<typeof satvoltClient>, tableId: string): Promise<Column[]> =>
+    call(client, 'get', `/export-tables/${tableId}/columns`);
+
+  columns
+    .command('list <tableId>')
+    .description('List the columns of a table in order, with their position.')
+    .action(async (tableId) => {
+      const global = getGlobalOpts(tables);
+      try {
+        const cols = await list(satvoltClient(global), tableId);
+        output(cols.map((c, position) => ({ position, ...c })), global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  columns
+    .command('add <tableId>')
+    .summary('Add one or more columns, optionally at a position.')
+    .description(
+      'Add a column (at the end unless --position, --before or --after). Without --type the\n' +
+        'server uses the type the pipeline step declares for the path, or string. --columns adds\n' +
+        'several at once.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt export-tables columns add 6650... --label "Consumo kWh" --path fullData.consumptionEstimate.annualKwh\n' +
+        '  suntropy satvolt export-tables columns add 6650... --label CIF --path fullData.cif.response.cif --after Empresa\n' +
+        '  suntropy satvolt export-tables columns add 6650... --columns "Web=lead.url:url;Teléfono=lead.phone"',
+    )
+    .option('--label <label>', 'Column header')
+    .option('--path <path>', 'lead.<column>, fullData.<path> or synthetic.googleMapsUrl')
+    .option('--type <type>', 'string | number | boolean | date | url')
+    .option('--id <id>', 'Column id (letters, digits, _ or -); generated when omitted')
+    .option('--columns <spec>', 'Several columns: "Label=path[:type];..." or JSON array')
+    .option('--position <n>', '0-based position')
+    .option('--before <column>', 'Insert before this column (id or label)')
+    .option('--after <column>', 'Insert after this column (id or label)')
+    .action(async (tableId, opts) => {
+      const global = getGlobalOpts(tables);
+      try {
+        const client = satvoltClient(global);
+        const specs: Array<Record<string, unknown>> = opts.columns
+          ? (parseColumns(opts.columns) as Array<Record<string, unknown>>)
+          : [{ label: opts.label, path: opts.path, ...(opts.type ? { type: opts.type } : {}), ...(opts.id ? { id: opts.id } : {}) }];
+        if (opts.columns && (opts.label || opts.path || opts.type || opts.id)) {
+          throw new Error('--columns cannot be combined with --label/--path/--type/--id');
+        }
+        if (specs.some((c) => !c.label || !c.path)) throw new Error('--label and --path are required (or --columns)');
+        let position = targetPosition(await list(client, tableId), opts);
+        let result: { table: unknown; column: unknown; warnings: unknown[] } | undefined;
+        const added: unknown[] = [];
+        const warnings: unknown[] = [];
+        for (const spec of specs) {
+          result = await call(client, 'post', `/export-tables/${tableId}/columns`, {
+            data: { ...spec, ...(position !== undefined ? { position } : {}) },
+          });
+          added.push(result!.column);
+          warnings.push(...(result!.warnings ?? []));
+          if (position !== undefined) position++;
+        }
+        output(specs.length === 1 ? result : { table: result!.table, columns: added, warnings }, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  columns
+    .command('set <tableId> <column>')
+    .summary('Change the label, path, type or position of one column.')
+    .description(
+      'Change the label, path, type and/or position of one column (id or label). What is not\n' +
+        'given stays the same; changing the path keeps the type unless --type is given.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt export-tables columns set 6650... "Consumo kWh" --label "Consumo anual (kWh)"\n' +
+        '  suntropy satvolt export-tables columns set 6650... c_1a2b3c4d --path fullData.cif.response.revenue.value --type number',
+    )
+    .option('--label <label>', 'New header')
+    .option('--path <path>', 'New data path')
+    .option('--type <type>', 'string | number | boolean | date | url')
+    .option('--position <n>', 'Move to this 0-based position')
+    .option('--before <column>', 'Move before this column')
+    .option('--after <column>', 'Move after this column')
+    .action(async (tableId, columnRef, opts) => {
+      const global = getGlobalOpts(tables);
+      try {
+        const client = satvoltClient(global);
+        const cols = await list(client, tableId);
+        const column = resolveColumn(cols, columnRef);
+        const position = targetPosition(cols, opts, column);
+        const body: Record<string, unknown> = {};
+        if (opts.label !== undefined) body.label = opts.label;
+        if (opts.path !== undefined) body.path = opts.path;
+        if (opts.type !== undefined) body.type = opts.type;
+        if (position !== undefined) body.position = position;
+        if (Object.keys(body).length === 0) throw new Error('Nothing to change: give --label, --path, --type or a position');
+        output(await call(client, 'patch', `/export-tables/${tableId}/columns/${encodeURIComponent(column.id)}`, { data: body }), global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  columns
+    .command('move <tableId> <column>')
+    .summary('Move one column to a position, or before/after another.')
+    .description(
+      'Move one column to a 0-based position, or before/after another column.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt export-tables columns move 6650... Maps --position 0\n' +
+        '  suntropy satvolt export-tables columns move 6650... CIF --after Empresa',
+    )
+    .option('--position <n>', '0-based position')
+    .option('--before <column>', 'Move before this column')
+    .option('--after <column>', 'Move after this column')
+    .action(async (tableId, columnRef, opts) => {
+      const global = getGlobalOpts(tables);
+      try {
+        const client = satvoltClient(global);
+        const cols = await list(client, tableId);
+        const column = resolveColumn(cols, columnRef);
+        const position = targetPosition(cols, opts, column);
+        if (position === undefined) throw new Error('Give --position, --before or --after');
+        output(
+          await call(client, 'patch', `/export-tables/${tableId}/columns/${encodeURIComponent(column.id)}`, { data: { position } }),
+          global,
+        );
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  columns
+    .command('reorder <tableId> <columns...>')
+    .description(
+      'Set the order of all columns at once (ids or labels, every column exactly once).\n' +
+        'Example:\n' +
+        '  suntropy satvolt export-tables columns reorder 6650... Empresa CIF Teléfono Maps',
+    )
+    .action(async (tableId, refs: string[]) => {
+      const global = getGlobalOpts(tables);
+      try {
+        const client = satvoltClient(global);
+        const cols = await list(client, tableId);
+        const columnIds = refs.map((ref) => resolveColumn(cols, ref).id);
+        output(await call(client, 'put', `/export-tables/${tableId}/columns/order`, { data: { columnIds } }), global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  columns
+    .command('remove <tableId> <columns...>')
+    .summary('Remove one or more columns (ids or labels).')
+    .description(
+      'Remove one or more columns (ids or labels).\n' +
+        'Example:\n' +
+        '  suntropy satvolt export-tables columns remove 6650... Maps c_1a2b3c4d',
+    )
+    .action(async (tableId, refs: string[]) => {
+      const global = getGlobalOpts(tables);
+      try {
+        const client = satvoltClient(global);
+        const cols = await list(client, tableId);
+        const targets = [...new Map(refs.map((ref) => resolveColumn(cols, ref)).map((c) => [c.id, c])).values()];
+        let result: { table: unknown } | undefined;
+        for (const column of targets) {
+          result = await call(client, 'delete', `/export-tables/${tableId}/columns/${encodeURIComponent(column.id)}`);
+        }
+        output({ table: result!.table, removed: targets }, global);
       } catch (err) {
         outputError(satvoltError(err));
       }

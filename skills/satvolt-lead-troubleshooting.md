@@ -7,7 +7,7 @@ Diagnostica y corrige pasos del pipeline que fallan o se quedan colgados en una 
 | Id de la campaña | Sí | - |
 | Paso o leads concretos que fallan | No | se detectan en el paso 1 |
 
-Relanzar pasos gasta los créditos de ese paso por lead. Enséñale al usuario cuántos leads y cuántos créditos implica, y pide confirmación.
+Relanzar pasos gasta los créditos de ese paso por lead (y con `--continue`, también los de los pasos posteriores). Una ejecución que vuelve a fallar no cobra. Enséñale al usuario cuántos leads y cuántos créditos implica, y pide confirmación.
 
 ## Paso 1: Localizar el fallo
 
@@ -56,7 +56,7 @@ lsof -nP -iTCP -sTCP:LISTEN | grep -E ':(8099|8090|8765|8500|8033) '
 | La configuración invalida la campaña entera | `campaigns reset <id> --yes --start` | Borra leads y resultados y vuelve a pagarlo todo (último recurso) |
 
 **Reglas de `leads run-step`:**
-- El paso se indica por uid, o por acción si aparece una sola vez (`AMBIGUOUS_STEP` lista los uids).
+- El paso se indica por uid, por acción si aparece una sola vez, por nombre (`"Decisor LinkedIn"`) o por su clave de fullData (`AMBIGUOUS_STEP` lista los uids).
 - **Modo por defecto:** un lead `completed` o `unQualified` conserva su estado. Solo cambia si el paso cambia el resultado del filtro: QUALIFY puede rescatar un lead descartado, y un paso que ahora lo descarta lo deja en `unQualified`.
 - **`--continue`:** vuelve a ejecutar y cobrar todos los pasos siguientes.
 - **`DEPENDENCY_NOT_MET`:** el lead no completó la dependencia (p. ej. FIND_ROOFTOP antes de ESTIMATE_CONSUMPTION). Relanza primero la dependencia; `--force` solo si sabes que el dato existe.

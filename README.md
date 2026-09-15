@@ -360,12 +360,14 @@ suntropy satvolt leads get <id> <leadId> --full-data consumptionEstimate
 suntropy satvolt leads full-data <id> <leadId> --path cif.response.extras.cnae
 suntropy satvolt leads run-step <id> <leadId> ESTIMATE_CONSUMPTION   # only that step
 suntropy satvolt leads run-step <id> <leadId> <uid> --continue       # and the rest of the pipeline
-suntropy satvolt leads fields <id>                             # paths for export columns
+suntropy satvolt export-tables fields <id> --format human      # column paths, grouped by pipeline step
 
 # Export tables
 suntropy satvolt export-tables create <id> --name "CRM" \
   --columns "Empresa=lead.commercialName;Consumo=fullData.consumptionEstimate.annualKwh:number"
-suntropy satvolt export-tables patch <tableId> --add-columns "Teléfono=lead.phone"
+suntropy satvolt export-tables columns add <tableId> --label Teléfono --path lead.phone --after Empresa
+suntropy satvolt export-tables columns set <tableId> Consumo --label "Consumo (kWh/año)"
+suntropy satvolt export-tables columns move <tableId> Teléfono --position 0
 suntropy satvolt export-tables data <tableId> --format csv
 suntropy satvolt export-tables export <tableId> --file-format xlsx --out leads.xlsx
 ```

@@ -23,7 +23,7 @@ suntropy satvolt campaigns list --state completed --format human
 ```
 
 - **Si existe una plantilla adecuada:** úsala con `--template "<nombre>"`.
-- **Si hay una campaña ya validada:** conviértela en plantilla, para reutilizarla también en la campaña final y en otras zonas.
+- **Si hay una campaña ya validada:** conviértela en plantilla, para reutilizarla en otras zonas. Si solo vas a lanzar esta sonda y ampliarla en el sitio, basta con `campaigns create --from-campaign <id>`.
 
 ```bash
 suntropy satvolt templates create --name "Greenvolt industria" --from-campaign 59 \
@@ -87,10 +87,10 @@ suntropy satvolt leads list <id> --state completed --format human
 suntropy satvolt leads list <id> --step <uid decisor> --step-status skipped   # cualificados sin LinkedIn de empresa
 ```
 
-**Calidad del enriquecimiento.** Monta una tabla con las columnas clave y revísala entera:
+**Calidad del enriquecimiento.** Monta una tabla con las columnas clave y revísala entera. Las rutas de `fullData` de este ejemplo son las de la configuración de la campaña 62 (agentes con alias `cif`, `companyLinkedin` y `decisoresLinkedin`): sácalas de `export-tables fields` para tu campaña. Añade la columna de QUALIFY (`fullData.qualification_<uid>.qualifies`) para separar los cualificados, porque `export-tables data` no filtra por estado:
 
 ```bash
-suntropy satvolt leads fields <id> --format human
+suntropy satvolt export-tables fields <id> --format human
 suntropy satvolt export-tables create <id> --name "Validación sonda" --columns \
 "Empresa=lead.commercialName;Tipo=lead.googlePlacesType;Estado=lead.state;\
 CIF=fullData.cif.response.cif;CNAE=fullData.cif.response.extras.cnae;\
@@ -99,6 +99,8 @@ Consumo kWh=fullData.consumptionEstimate.annualKwh:number;\
 Confianza=fullData.consumptionEstimate.confidence.label;\
 Parcela=fullData.catastralParcel.catastralReference"
 suntropy satvolt export-tables data <tableId> --limit 100 --format human
+# Añadir o ajustar columnas sin rehacer la tabla
+suntropy satvolt export-tables columns add <tableId> --label Decisor --path fullData.decisoresLinkedin.response.mainDecisionMaker.name --after LinkedIn
 ```
 
 | Señal | Qué suele significar | Acción |

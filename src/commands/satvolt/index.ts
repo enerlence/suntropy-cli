@@ -34,8 +34,8 @@ export function registerSatvoltCommands(program: Command): void {
     .description('Reference data for building campaigns and pipelines.');
 
   const catalogEntries: Array<[string, string, string]> = [
-    ['actions', '/catalog/actions', 'Pipeline actions: credits per lead, dependencies, multiple, and the JSON Schema of their config.'],
-    ['ai-agents', '/catalog/ai-agents', 'AI agents allowed in AI_AGENT config.agentId.'],
+    ['actions', '/catalog/actions', 'Pipeline actions: credits per lead (fixed per action; failed or skipped runs are free), dependencies, multiple, and the JSON Schema of their config (the input). The data each step writes: satvolt export-tables fields <campaignId>.'],
+    ['ai-agents', '/catalog/ai-agents', 'AI agents allowed in AI_AGENT config.agentId: id, name and description. Every agent costs the AI_AGENT credits.'],
     ['business-groups', '/catalog/business-groups', 'Business category groups for --business-groups.'],
     ['states', '/catalog/states', 'Campaign and lead states.'],
   ];

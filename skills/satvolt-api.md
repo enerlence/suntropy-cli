@@ -27,7 +27,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$API/campaigns?state=completed&limit=
 
 | Método | Ruta | Devuelve |
 |---|---|---|
-| GET | `/catalog/actions` | Acciones LEAD visibles: `action`, `name`, `description`, `multiple`, `isAsync`, `creditCost`, `finalLeadState`, `dependencies`, `resultsPropertyKeys`, `configSchema` (JSON Schema) |
+| GET | `/catalog/actions` | Acciones LEAD visibles: `action`, `name`, `description`, `multiple`, `isAsync`, `creditCost` (fijo por lead; las ejecuciones fallidas o saltadas no cobran), `finalLeadState`, `dependencies`, `resultsPropertyKeys` (solo claves de primer nivel), `configSchema` (JSON Schema de la configuración de entrada). Las rutas de los datos que escribe cada paso salen de `/campaigns/:id/fields` |
 | GET | `/catalog/ai-agents` | Agentes válidos para `AI_AGENT.config.agentId` |
 | GET | `/catalog/business-groups` | Grupos para `businessGroups` |
 | GET | `/catalog/states` | Estados de campaña y de lead |
@@ -114,10 +114,12 @@ La `action` de un paso existente no se puede cambiar. Si la campaña está en ma
 
 | Método | Ruta | Parámetros |
 |---|---|---|
-| GET | `/campaigns/:id/leads` | `?limit&offset&name&search&state=a,b&step=<uid\|ACCIÓN>&stepStatus=reached\|success\|failure\|skipped\|processing\|pending&include=steps` |
+| GET | `/campaigns/:id/leads` | `?limit&offset&name&search&state=a,b&step=<paso>&stepStatus=reached\|success\|failure\|skipped\|processing\|pending&include=steps` |
 | GET | `/campaigns/:id/leads/:leadId` | `?fullData=true` (todo) o `?fullData=clave1,clave2` |
 | POST | `/campaigns/:id/leads/:leadId/steps/:step/run` | `{ "mode": "only" \| "continue", "force": false }` → 202 |
-| GET | `/campaigns/:id/fields` | `?sample=100`: rutas para columnas de exportación, con tipo, cobertura y ejemplo |
+| GET | `/campaigns/:id/fields` | `?sample=25` (máx. 100) `&step=<paso>`: campos para columnas de exportación, agrupados por paso (ver *Tablas de exportación*) |
+
+**`<paso>`** (en `step=` de `/leads` y `/fields`, y en la ruta de `run`): uid, acción si aparece una sola vez, nombre completo del paso (`customName`, sin distinguir mayúsculas ni tildes; no vale un trozo) o clave de fullData donde deja sus datos (`cif`, `qualification_<uid>`). Varias coincidencias: `400 AMBIGUOUS_STEP` con los uids en `details`; ninguna: `404 STEP_NOT_FOUND` con la lista de pasos.
 
 **Cada lead de la lista** trae `idLead`, `commercialName`, `state`, `stateError`, `lastAction`, `lastStepUid`, `address`, `phone`, `url`, `googlePlacesType`, `coordinates`, `qualifications` y, con `include=steps`, `steps`.
 
@@ -138,18 +140,76 @@ La `action` de un paso existente no se puede cambiar. Si la campaña está en ma
 | Método | Ruta | Body / parámetros |
 |---|---|---|
 | GET | `/campaigns/:id/export-tables` | Tablas de la campaña |
-| POST | `/campaigns/:id/export-tables` | `{ name, description?, columns: [{ id?, label, path, type }] }` |
+| POST | `/campaigns/:id/export-tables` | `{ name, description?, columns: [{ id?, label, path, type? }] }` → 201 con la tabla en `data` (incluye `warnings`) |
 | GET | `/export-tables/:tableId` | Definición |
 | PUT | `/export-tables/:tableId` | `{ name, description?, columns }` (lista completa; conserva los `id`) |
-| PATCH | `/export-tables/:tableId` | `{ name?, description?, columns? }` |
+| PATCH | `/export-tables/:tableId` | `{ name?, description?, columns? }` (`columns` sustituye la lista entera) |
 | DELETE | `/export-tables/:tableId` | Borra la tabla |
 | POST | `/export-tables/:tableId/duplicate` | `{ targetCampaignId, name? }` |
 | GET | `/export-tables/:tableId/data` | `?limit(≤500)&offset&search` → `{ columns, items, total, ... }` |
-| GET | `/export-tables/:tableId/export` | `?format=xlsx\|csv` → fichero; cabeceras `Content-Disposition` y `X-Row-Count` |
+| GET | `/export-tables/:tableId/export` | `?format=xlsx\|csv` → fichero con todas las filas (hasta 100.000, sin paginar); cabeceras `Content-Disposition` y `X-Row-Count`. CSV: UTF-8 con BOM, separado por comas, textos con comas, comillas o saltos de línea entre comillas dobles, booleanos `true`/`false` |
 
-- **Rutas de columna:** `lead.<columna>`, `synthetic.<clave>` y `fullData.<ruta.anidada>`. Las válidas salen de `/campaigns/:id/fields`.
+**Tabla** (respuesta de GET, POST, PUT y PATCH; estas tres últimas añaden `warnings`):
+
+```json
+{ "id": "6650f0c2a1b2c3d4e5f60718", "campaignId": 62, "name": "CRM", "description": null,
+  "columns": [{ "id": "c_1a2b3c4d", "label": "Empresa", "path": "lead.commercialName", "type": "string" }],
+  "createdAtMs": 1789500035718, "updatedAtMs": 1789500035718, "warnings": [] }
+```
+
+**Columnas una a una** (sin reenviar la lista entera):
+
+| Método | Ruta | Body |
+|---|---|---|
+| GET | `/export-tables/:tableId/columns` | Columnas en orden |
+| POST | `/export-tables/:tableId/columns` | `{ label, path, type?, id?, position? }` → 201 `{ table, column, warnings }` |
+| PATCH | `/export-tables/:tableId/columns/:columnId` | `{ label?, path?, type?, position? }` → `{ table, column, warnings }` |
+| DELETE | `/export-tables/:tableId/columns/:columnId` | → `{ table, column, warnings }` |
+| PUT | `/export-tables/:tableId/columns/order` | `{ columnIds: [...] }` con todas las columnas en el orden nuevo → `{ table, warnings }` |
+
+- **`position`:** índice desde 0 (0 = primera columna). Sin `position`, POST añade al final y PATCH deja la columna donde está.
+- **`type`:** opcional al crear. Por defecto se usa el de la columna del lead (`lead.url` → `url`) o el que declara el paso que escribe la ruta (`fullData.consumptionEstimate.annualKwh` → `number`); si no se conoce, `string`. Al cambiar `path` en un PATCH el tipo se mantiene salvo que se mande `type`.
+- **`id`:** letras, dígitos, `_` o `-`, hasta 32 caracteres; se genera si no se manda.
+- **Concurrencia:** cada operación se aplica sobre el estado actual de la tabla, así que dos cambios simultáneos no se pisan. `409 CONCURRENT_UPDATE` si no se pudo aplicar tras varios intentos: repite la llamada.
+- **Errores:** `404 COLUMN_NOT_FOUND`, `400 DUPLICATE_COLUMN_ID`, `400 INVALID_POSITION`, `400 INVALID_ORDER` (faltan o sobran ids en `columnIds`).
+
+**Descubrir campos: `GET /campaigns/:id/fields`.** Devuelve los campos agrupados por paso del pipeline. Cada paso trae los campos que declara, así que funciona antes de lanzar la campaña, y la muestra de leads añade cobertura, ejemplos y los campos que dependen de la configuración:
+
+```json
+{
+  "campaignId": 62, "sampledLeads": 25,
+  "lead": [{ "path": "lead.commercialName", "label": "Business name", "type": "string" }],
+  "synthetic": [{ "path": "synthetic.googleMapsUrl", "label": "Google Maps URL", "type": "url" }],
+  "steps": [{
+    "uid": "95161b8b080180e4", "action": "AI_AGENT", "name": "Buscador de CIF y Facturacion",
+    "keys": ["cif"], "coverage": 0.32,
+    "fields": [
+      { "path": "fullData.cif.response.extras.cnae", "label": "Extras · Cnae", "type": "string",
+        "source": "observed", "coverage": 0.32, "example": "2512" }
+    ],
+    "dynamic": [{ "path": "fullData.cif.response", "description": "Agent response: ...",
+                  "inferredFrom": { "campaignId": 59, "sampledLeads": 25 } }]
+  }],
+  "other": []
+}
+```
+
+- **`source`:** `catalog` (lo declara el paso), `observed` (aparece en los leads de la muestra) u `otherCampaign` (deducido de otra campaña tuya con el mismo agente, porque esta aún no tiene respuestas).
+- **`keys`:** claves de `fullData` del paso. Un AI_AGENT o CUSTOM_WEBHOOK con `outputKey` usa el alias; QUALIFY usa `resultKey` o `qualification_<uid>`.
+- **Campos fijos de los pasos más usados:**
+  - QUALIFY: `fullData.<clave>.qualifies` (boolean) y `.explanation`.
+  - AI_AGENT: `fullData.<clave>.response.<campo>` (depende del agente), más `threadId`, `state` y `completedAt`.
+  - ESTIMATE_CONSUMPTION: `fullData.consumptionEstimate.annualKwh`, `.confidence.label`, `.inputsUsed.cnae_2`…
+  - FIND_ROOFTOP: `fullData.catastralParcel.catastralReference` y `.area`.
+  - `synthetic.googleMapsUrl`: enlace a Google Maps construido con las coordenadas.
+- **`dynamic`:** partes cuya forma depende de la configuración del paso (respuesta de un agente o de un webhook). Sus campos aparecen en `fields` cuando hay leads con respuesta o se deducen de otra campaña; si no hay ninguno, la ruta se completa a mano (`fullData.<clave>.response.<campo>`).
+- **`coverage`:** parte de los leads muestreados con ese dato (null si la campaña no tiene leads). Una cobertura baja en un campo de un paso posterior a un filtro (QUALIFY) es normal.
+- **`other`:** datos de los leads que no escribe ningún paso actual (pasos borrados o alias cambiados).
+
+- **Rutas de columna:** `lead.<columna>`, `synthetic.<clave>` y `fullData.<ruta.anidada>` (arrays con índice: `fullData.consumptionEstimate.monthlyKwh[0]`).
 - **Tipos:** `string`, `number`, `boolean`, `date` y `url`.
-- **Errores:** `404 EXPORT_TABLE_NOT_FOUND` si el id no existe (o no es un ObjectId) y `400 VALIDATION_ERROR` si alguna ruta es inválida.
+- **Avisos:** crear o editar columnas devuelve `warnings` con `UNKNOWN_FULLDATA_KEY` si ningún paso de la campaña escribe la clave de `fullData` de la ruta (errata o alias cambiado). No bloquea: la columna se guarda.
+- **Errores:** `404 EXPORT_TABLE_NOT_FOUND` si el id no existe (o no es un ObjectId) y `400 VALIDATION_ERROR` si alguna ruta o id es inválido.
 
 ## Plantillas de campaña
 
@@ -181,4 +241,13 @@ curl -s -H "$H" "$API/campaigns/$ID/funnel" | jq '.data.steps[] | {name, success
 curl -s -X POST "$API/campaigns/$ID/extend" -H "$H" -H "$J" -d '{"maxLeads":null}'
 # 5. Créditos consumidos
 curl -s -H "$H" "$API/campaigns/$ID/usage" | jq '.data | {totalCredits, avgCreditsPerLead, byStep}'
+# 6. Tabla de exportación: rutas del paso QUALIFY y del agente de CIF, tabla, columna en 2ª posición y CSV
+curl -s -H "$H" "$API/campaigns/$ID/fields?step=QUALIFY" | jq '.data.steps[0].fields[] | {path, type}'
+curl -s -H "$H" "$API/campaigns/$ID/fields?step=cif" | jq '.data.steps[0].fields[] | select(.path | test("cnae")) | .path'
+TABLE=$(curl -s -X POST "$API/campaigns/$ID/export-tables" -H "$H" -H "$J" -d '{"name":"Cualificación","columns":[
+  {"label":"Empresa","path":"lead.commercialName"},
+  {"label":"Cualifica","path":"fullData.qualification_<uid>.qualifies"},
+  {"label":"Motivo","path":"fullData.qualification_<uid>.explanation"}]}' | jq -r .data.id)
+curl -s -X POST "$API/export-tables/$TABLE/columns" -H "$H" -H "$J" -d '{"label":"CNAE","path":"fullData.cif.response.extras.cnae","position":1}'
+curl -s -H "$H" "$API/export-tables/$TABLE/export?format=csv" -o cualificacion.csv
 ```

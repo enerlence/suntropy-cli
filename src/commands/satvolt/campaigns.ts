@@ -247,7 +247,10 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         'removes) its lead limit and searches again only in the sectors whose search was\n' +
         'cut short. Existing leads are kept and only the new ones go through the pipeline\n' +
         '(spends credits). `campaigns get` shows sectorSearch: incomplete + unknown > 0\n' +
-        'means more leads can still be found.\n' +
+        'means more leads can still be found; 0 means the area is exhausted.\n' +
+        'Cost: new leads x credits per lead (`campaigns usage` → avgCreditsPerLead). With\n' +
+        '--max-leads the new leads are at most the difference; with --no-limit estimate them\n' +
+        'from the leads found per sector so far.\n' +
         'Examples:\n' +
         '  suntropy satvolt campaigns extend 62 --max-leads 500\n' +
         '  suntropy satvolt campaigns extend 62 --no-limit',
@@ -279,10 +282,14 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .description(
       'Resume a finished campaign from a NEW step: appends it at the end of the pipeline\n' +
         '(before COMPLETE) and runs it over the existing leads that reached the previous\n' +
-        'step. If the step cannot run, the configuration change is rolled back.\n' +
+        'step. Missing dependencies are added before it. If the step cannot run, the\n' +
+        'configuration change is rolled back. --config is only the config object of the step\n' +
+        '(see configSchema in `satvolt catalog actions`), not { action, config }.\n' +
+        'Cost: leads that reached the last step (`campaigns funnel`) x creditCost of the action.\n' +
         'Examples:\n' +
         '  suntropy satvolt campaigns resume 59 --action ESTIMATE_CONSUMPTION --config \'{"tariffTemplate":"3.0TD"}\'\n' +
-        '  suntropy satvolt campaigns resume 59 --action AI_AGENT --config @agent-step.json',
+        '  suntropy satvolt campaigns resume 59 --action AI_AGENT \\\n' +
+        '    --config \'{"customName":"Web corporativa","agentId":"<id from catalog ai-agents>","outputKey":"web"}\'',
     )
     .requiredOption('--action <ACTION>', 'Action to add (see: satvolt catalog actions)')
     .option('--config <json>', 'Step config as JSON, @file or -')

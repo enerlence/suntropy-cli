@@ -70,7 +70,11 @@ suntropy satvolt campaigns create --name "<nombre>" --from-campaign <id> --bound
 
 La respuesta trae `campaign.idCampaign`, `estimatedCreditsPerLead` y `warnings`. La campaña queda en `queued`.
 
-Coste estimado ≈ `estimatedCreditsPerLead × maxLeads` (sin contar FIND_LEADS). Enséñalo antes de arrancar.
+Coste estimado, antes de arrancar:
+- **Máximo:** `estimatedCreditsPerLead × maxLeads` (sin contar FIND_LEADS), como si todos los leads pasaran todos los pasos.
+- **Realista:** si hay una campaña anterior con la misma configuración, `campaigns usage <id>` → `avgCreditsPerLead × maxLeads`. Los filtros (QUALIFY) hacen que la mayoría de leads no pague los pasos caros.
+
+Enséñale al usuario el rango y pide confirmación. Las ejecuciones fallidas o saltadas no cobran.
 
 ### Paso 3: Arrancar y seguir
 
@@ -95,22 +99,34 @@ suntropy satvolt leads full-data <campaignId> <leadId> --path cif.response.extra
 
 ### Paso 5: Tabla de exportación
 
-Descubre qué datos hay antes de definir columnas:
+Descubre qué campos hay y en qué ruta de `fullData` los deja cada paso. Funciona antes de lanzar la campaña: cada paso lista los campos que declara, y los de un agente se deducen de otra campaña con el mismo agente si esta aún no tiene respuestas.
 
 ```bash
-suntropy satvolt leads fields <campaignId> --format human    # path, tipo, cobertura y ejemplo
+suntropy satvolt export-tables fields <campaignId> --format human                # todos, agrupados por paso
+suntropy satvolt export-tables fields <campaignId> --step <uid|ACCIÓN> --format human
+suntropy satvolt export-tables fields <campaignId> --search cnae --format human   # dónde está un dato
 ```
+
+Columnas que salen: `group` (paso), `path` (ruta para la columna), `label`, `type`, `source` (`catalog`, `observed`, `otherCampaign`, `dynamic`), `coverage` (leads de la muestra con el dato) y `example`.
 
 ```bash
 suntropy satvolt export-tables create <campaignId> --name "CRM" \
-  --columns "Empresa=lead.commercialName;Teléfono=lead.phone;Web=lead.url:url;Consumo anual kWh=fullData.consumptionEstimate.annualKwh:number;Maps=synthetic.googleMapsUrl:url"
+  --columns "Empresa=lead.commercialName;Teléfono=lead.phone;Web=lead.url;Consumo anual kWh=fullData.consumptionEstimate.annualKwh;Maps=synthetic.googleMapsUrl"
+
+# Ajustar columnas sueltas (por id o etiqueta; posiciones desde 0)
+suntropy satvolt export-tables columns add <tableId> --label CIF --path fullData.cif.response.cif --after Empresa
+suntropy satvolt export-tables columns set <tableId> "Consumo anual kWh" --label "Consumo (kWh/año)"
+suntropy satvolt export-tables columns move <tableId> Maps --position 0
+suntropy satvolt export-tables columns remove <tableId> Teléfono
+suntropy satvolt export-tables columns list <tableId> --format human
 
 suntropy satvolt export-tables data <tableId> --limit 20 --format human
 suntropy satvolt export-tables export <tableId> --file-format xlsx --out campaña.xlsx
 suntropy satvolt export-tables export <tableId> --file-format csv --out campaña.csv
 ```
 
-Tipos de columna: `string`, `number`, `boolean`, `date`, `url`.
+- **Tipos de columna:** `string`, `number`, `boolean`, `date`, `url`. Sin tipo, se usa el que declara el paso para esa ruta.
+- **`warnings` con `UNKNOWN_FULLDATA_KEY`:** ningún paso de la campaña escribe esa clave; revisa la ruta con `export-tables fields`.
 
 ### Paso 6: Cambiar el pipeline
 
@@ -130,8 +146,24 @@ suntropy satvolt config update <campaignId> --data @pipeline.json
 Para añadir una acción a una campaña terminada sin reprocesarla, usa `resume`. Añade el paso al final y lo lanza sobre los leads que llegaron al paso anterior:
 
 ```bash
+suntropy satvolt catalog ai-agents --format human     # id, nombre y descripción de cada agente
+suntropy satvolt campaigns funnel <campaignId>         # leads que llegaron al último paso: los que pagarán el nuevo
+suntropy satvolt campaigns resume <campaignId> --action AI_AGENT \
+  --config '{"customName":"Web corporativa","agentId":"<id>","outputKey":"web"}'
+```
+
+`--config` es solo el objeto de configuración del paso (el `configSchema` de `catalog actions`), no `{ action, config }`. Coste ≈ leads que llegaron al último paso × `creditCost` de la acción.
+
+Si el `agentId` sale de una variable de shell, no lo metas entre comillas simples (no se expande); usa un fichero:
+
+```bash
+cat > agent.json <<EOF
+{ "customName": "Web corporativa", "agentId": "$AGENT_ID", "outputKey": "web" }
+EOF
 suntropy satvolt campaigns resume <campaignId> --action AI_AGENT --config @agent.json
 ```
+
+Para guardar el pipeline con el paso nuevo en una plantilla, haz `templates create --from-campaign` después del `resume`: la plantilla copia la configuración que tenga la campaña en ese momento.
 
 Si se añadió antes un paso con `steps add` y nunca se ejecutó, `steps list` lo marca con `runnable: true`. Se lanza con:
 

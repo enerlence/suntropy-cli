@@ -34,10 +34,13 @@ El token es un JWT con `clientUID`. Todo queda acotado a la empresa del token. C
 - **Pasos del pipeline:**
   - Solo se definen los pasos LEAD. SECTORIZE, FIND_LEADS y COMPLETE los pone el backend; en `config get` salen con `structural: true`.
   - Cada paso tiene un `uid`, que es su identidad: los parches, `steps set`, `leads run-step` y las claves de fullData (`qualification_<uid>`, `aiAgent_<uid>`) lo usan.
-  - Una acción puede ir en lugar del uid solo si aparece una vez en el pipeline. Si no, el error es `AMBIGUOUS_STEP` y lista los uids.
+  - Donde se pide un paso (`--step`, `leads run-step`) vale el uid, la acción si aparece una sola vez, el nombre del paso (`"Buscador de CIF"`, sin distinguir mayúsculas ni tildes) o la clave de fullData donde deja sus datos (`cif`, `qualification_<uid>`). Si hay varias coincidencias, el error es `AMBIGUOUS_STEP` y lista los uids.
   - `catalog actions` da de cada acción los créditos por lead, las dependencias, si admite repetirse (`multiple`) y el JSON Schema de su `config`.
   - Los valores `default` se rellenan solos. Las dependencias que falten se añaden y se avisa en `warnings`.
-- **Créditos:** 1 crédito = 0,005 €. `estimatedCreditsPerLead` al crear es el máximo, como si todos los leads pasaran todos los pasos; los filtros (QUALIFY) lo reducen. El consumo real por lead lo da `campaigns usage`.
+- **Créditos:** 1 crédito = 0,005 €.
+  - Cada acción cobra un precio fijo por lead (`creditCost` en `catalog actions` o `steps list`). Todos los agentes de AI_AGENT cuestan lo mismo.
+  - Las ejecuciones fallidas o saltadas (`skipped`) no cobran.
+  - `estimatedCreditsPerLead` al crear es el máximo, como si todos los leads pasaran todos los pasos; los filtros (QUALIFY) lo reducen. El consumo real por lead lo da `campaigns usage` (`avgCreditsPerLead`); para estimar una campaña nueva, usa el de una campaña anterior con la misma configuración.
 - **Estados:** consulta `catalog states`.
   - Campaña: `queued` → `inProgress` → `completed`, `failed`, `paused` o `canceled`.
   - Lead: `pending` → estados intermedios (`rooftopFound`, `qualified`, `consumptionEstimated`…) → `completed`, `unQualified` o `failed`.
@@ -77,7 +80,7 @@ Una plantilla guarda todo lo que define una campaña salvo el nombre y el área:
 | `campaigns create --name N <área> [base] [opciones]` | Crea una campaña de Maps en cola (`--start` la arranca) |
 | `campaigns start <id>` | Arranca una campaña `queued` (gasta créditos) |
 | `campaigns logs <id> [--level error] [--since ts] [--follow]` | Logs de procesamiento (30 días, 5.000 entradas); `--follow` termina solo |
-| `campaigns funnel <id>` | Por paso: alcanzados, success, failure, skipped, processing y pending |
+| `campaigns funnel <id>` | Por paso (`steps[]` con `uid`, `action`, `name`, `reached`, `success`, `failure`, `skipped`, `processing`, `pending`), más `leadStates` |
 | `campaigns usage <id> [--by-lead]` | Créditos cobrados (regla de la pestaña Usage) |
 | `campaigns extend <id> --max-leads N \| --no-limit` | Más leads sin relanzar: solo busca en los sectores pendientes |
 | `campaigns resume <id> --action A [--config json]` | Añade un paso al final y lo ejecuta sobre los leads existentes |
@@ -126,7 +129,7 @@ Si la campaña está en marcha, cambiar el orden o quitar pasos devuelve un avis
 | `leads get <id> <leadId> [--full-data [claves]]` | Detalle: estado de cada paso, historial y claves de fullData |
 | `leads full-data <id> <leadId> [--keys a,b] [--path a.b.c]` | Solo el fullData, o un valor concreto |
 | `leads run-step <id> <leadId> <uid\|ACCIÓN> [--continue] [--force]` | Ejecuta un paso en un lead |
-| `leads fields <id> [--sample n]` | Rutas disponibles para columnas de exportación, con tipo, cobertura y ejemplo |
+| `leads fields <id> [--sample n] [--step uid\|ACCIÓN] [--search t]` | Campos para columnas de exportación por paso (igual que `export-tables fields`) |
 
 `--step-status` admite `reached` (por defecto), `success`, `failure`, `skipped`, `processing` o `pending`.
 
@@ -141,17 +144,28 @@ Si la campaña está en marcha, cambiar el orden o quitar pasos devuelve un avis
 
 | Comando | Qué hace |
 |---|---|
+| `export-tables fields <campaignId> [--step uid\|ACCIÓN] [--search t] [--sample n]` | Campos disponibles para columnas, agrupados por paso: ruta, etiqueta, tipo, origen, cobertura y ejemplo |
 | `export-tables list <campaignId>` | Tablas de la campaña |
 | `export-tables get <tableId>` | Definición con columnas |
 | `export-tables create <campaignId> --name N --columns "Etiqueta=ruta[:tipo];..."` | Crea una tabla. Tipos: `string`, `number`, `boolean`, `date`, `url` |
 | `export-tables update <tableId> --data @t.json` | PUT (conserva los `id` de las columnas) |
-| `export-tables patch <tableId> [--name] [--columns] [--add-columns] [--remove-columns ids\|etiquetas]` | Cambios sueltos |
+| `export-tables patch <tableId> [--name] [--description] [--columns]` | Nombre, descripción o lista entera de columnas |
+| `export-tables columns list <tableId>` | Columnas en orden, con su posición (desde 0) |
+| `export-tables columns add <tableId> --label L --path P [--type T] [--position n\|--before col\|--after col]` | Añade una columna. `--columns "A=ruta;B=ruta"` añade varias |
+| `export-tables columns set <tableId> <col> [--label] [--path] [--type] [--position n\|--before\|--after]` | Cambia una columna; lo que no se pasa se queda igual |
+| `export-tables columns move <tableId> <col> --position n\|--before col\|--after col` | Mueve una columna |
+| `export-tables columns reorder <tableId> <col>...` | Orden completo (todas las columnas, una vez cada una) |
+| `export-tables columns remove <tableId> <col>...` | Quita una o varias columnas |
 | `export-tables duplicate <tableId> --campaign <id> [--name]` | Copia la tabla a otra campaña |
 | `export-tables data <tableId> [--limit ≤500] [--offset] [--search]` | Filas con los valores de las columnas |
 | `export-tables export <tableId> --file-format xlsx\|csv [--out f]` | Descarga todas las filas (hasta 100.000) |
 | `export-tables delete <tableId>` | Borra la tabla (sin confirmación: pregúntale antes al usuario) |
 
-- **Rutas de columna:** `lead.<columna>`, `synthetic.<clave>` (por ejemplo `synthetic.googleMapsUrl`) y `fullData.<ruta>` (por ejemplo `fullData.consumptionEstimate.annualKwh`). Se descubren con `leads fields`.
+- **Rutas de columna:** `lead.<columna>`, `synthetic.<clave>` (por ejemplo `synthetic.googleMapsUrl`) y `fullData.<ruta>` (por ejemplo `fullData.consumptionEstimate.annualKwh`). Se descubren con `export-tables fields <campaignId>`.
+- **`fields`:** cada paso lista los campos que declara aunque la campaña aún no tenga leads (`source: catalog`), más los vistos en la muestra (`observed`). La respuesta de un AI_AGENT depende del agente: si la campaña aún no tiene respuestas, sus campos se deducen de otra campaña tuya con el mismo agente (`otherCampaign`). Las filas `dynamic` (`fullData.<clave>.response.*`) marcan partes cuya forma depende de la configuración.
+- **`<col>`:** id o etiqueta de la columna (la etiqueta no distingue mayúsculas). Si dos columnas tienen la misma etiqueta, usa el id.
+- **Tipo por defecto:** sin `:tipo` o `--type`, la columna toma el tipo de la columna del lead o el que declara el paso para esa ruta (`annualKwh` → `number`); si no, `string`.
+- **`warnings`:** crear o editar columnas avisa con `UNKNOWN_FULLDATA_KEY` si ningún paso de la campaña escribe esa clave de `fullData` (errata, alias cambiado). La columna se guarda igualmente.
 - **Tablas entre campañas:** las campañas de una misma plantilla comparten uids, así que una tabla con `fullData.qualification_<uid>` se puede duplicar entre ellas.
 
 ## Códigos de error frecuentes

@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { output, outputError, outputPaginated } from '../../output.js';
+import { registerFieldsCommand } from './fields.js';
 import {
   call,
   getGlobalOpts,
@@ -23,7 +24,8 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
         '  --name <text>          commercial name contains (like the web table)\n' +
         '  --search <text>        name, address, phone, place id or reference\n' +
         '  --state <a,b>          lead states (see: satvolt catalog states)\n' +
-        '  --step <uid|ACTION>    pipeline step (ACTION only if it appears once)\n' +
+        '  --step <step>          pipeline step: uid, ACTION (if it appears once), step name\n' +
+        '                         ("Buscador de CIF") or fullData key (cif)\n' +
         '  --step-status <s>      reached (default) | success | failure | skipped | processing | pending\n\n' +
         'Examples:\n' +
         '  suntropy satvolt leads list 59 --name "logistica" --limit 25\n' +
@@ -36,7 +38,7 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
     .option('--name <text>', 'Commercial name contains')
     .option('--search <text>', 'Broad search')
     .option('--state <states>', 'Comma-separated lead states')
-    .option('--step <uid|ACTION>', 'Filter by pipeline step')
+    .option('--step <step>', 'Filter by pipeline step: uid, ACTION (if unique), step name or fullData key')
     .option('--step-status <status>', 'Status in that step')
     .option('--with-steps', 'Include the status of every LEAD step on each lead')
     .action(async (campaignId, opts) => {
@@ -131,8 +133,9 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
     .command('run-step <campaignId> <leadId> <step>')
     .summary('Run one pipeline step on a single lead (only that step, or --continue).')
     .description(
-      'Run one pipeline step (uid, or action if it appears once) on a single lead, through\n' +
-        'the same queue as the pipeline. Spends the credits of that step.\n' +
+      'Run one pipeline step on a single lead, through the same queue as the pipeline.\n' +
+        'Step: uid, action if it appears once, step name or fullData key (e.g. cif).\n' +
+        'Spends the credits of that step (a failed or skipped run is free).\n' +
         '  default       only that step: later steps are not queued and a completed or\n' +
         '                unqualified lead keeps its state (except when re-running QUALIFY)\n' +
         '  --continue    continue the pipeline from that step (later steps run again)\n' +
@@ -158,36 +161,5 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
       }
     });
 
-  leads
-    .command('fields <campaignId>')
-    .description(
-      'Data paths available for export table columns: lead.* columns, synthetic.* and the\n' +
-        'fullData.* leaves found in a sample of the campaign leads, with type, coverage\n' +
-        '(share of sampled leads that have it) and an example value.\n' +
-        'Example:\n' +
-        '  suntropy satvolt leads fields 59 --sample 50 --format human',
-    )
-    .option('--sample <n>', 'Leads to sample (max 100)', '25')
-    .action(async (campaignId, opts) => {
-      const global = getGlobalOpts(leads);
-      try {
-        const data = await call(satvoltClient(global, 120000), 'get', `/campaigns/${parseId(campaignId, 'campaignId')}/fields`, {
-          params: { sample: opts.sample },
-        });
-        if (global.format === 'json') {
-          output(data, global);
-        } else {
-          output(
-            [
-              ...data.lead.map((f: { path: string }) => ({ path: f.path, type: 'column', coverage: 1, example: null })),
-              ...data.synthetic.map((f: { path: string }) => ({ path: f.path, type: 'synthetic', coverage: 1, example: null })),
-              ...data.fullData,
-            ],
-            global,
-          );
-        }
-      } catch (err) {
-        outputError(satvoltError(err));
-      }
-    });
+  registerFieldsCommand(leads, 'Same as `satvolt export-tables fields`.');
 }
