@@ -89,6 +89,7 @@ const SERVICE_PATHS: Record<string, string> = {
   profiles: '/profiles',
   periods: '/periods',
   notifications: '/notifications',
+  satvolt: '/satvolt',
 };
 
 const LOCAL_PORTS: Record<string, number> = {
@@ -98,6 +99,7 @@ const LOCAL_PORTS: Record<string, number> = {
   profiles: 8085,
   periods: 8084,
   notifications: 8093,
+  satvolt: 8099,
 };
 
 export function getServiceUrl(baseServer: string, service: keyof typeof SERVICE_PATHS): string {

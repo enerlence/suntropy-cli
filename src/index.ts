@@ -11,6 +11,7 @@ import { registerShareableCommands } from './commands/shareables/index.js';
 import { registerTemplatesCommands } from './commands/templates/index.js';
 import { registerGeocodeCommands } from './commands/geocode/index.js';
 import { registerNotificationsCommands } from './commands/notifications/index.js';
+import { registerSatvoltCommands } from './commands/satvolt/index.js';
 import { registerCommandProfileCommand } from './commands/command-profile.js';
 import { applyCommandProfile } from './access.js';
 
@@ -47,6 +48,7 @@ export function createProgram(): Command {
   registerTemplatesCommands(program);
   registerGeocodeCommands(program);
   registerNotificationsCommands(program);
+  registerSatvoltCommands(program);
 
   // Hidden admin command to manage the command access profile. Registered last
   // and always exempt from gating, so it can raise/lower the tier from any tier.
