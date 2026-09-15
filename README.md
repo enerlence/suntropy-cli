@@ -307,6 +307,60 @@ suntropy templates list --fields _id,templateName --format csv
 `--type` (default `solarStudy`): `solarStudy | colectiveSolarStudy | veChargerStudy | generic`.
 `generic` lists the untyped templates (sends no `templateIdentifier` filter).
 
+### `suntropy satvolt` - Satvolt Campaigns
+
+Lead-generation campaigns on the Satvolt public API (`<server>/satvolt/api/v1`,
+`localhost:8099` locally), with the same token as the rest of the CLI. Every
+pipeline action spends credits per lead: check `estimatedCreditsPerLead` before
+starting.
+
+```bash
+# Reference data
+suntropy satvolt catalog actions           # credits, dependencies and config JSON Schema
+suntropy satvolt catalog business-groups
+
+# Campaigns
+suntropy satvolt campaigns list --state completed
+suntropy satvolt campaigns create --name "Cobo Calleja" --circle 40.2597,-3.7545 --radius 1500 \
+  --max-leads 300 --steps '[{"action":"FIND_ROOFTOP"},{"action":"SOLAR_ANALYSIS"}]'
+suntropy satvolt campaigns create --name "Test" --polygon @area.geojson --steps @steps.json
+suntropy satvolt campaigns start <id>
+suntropy satvolt campaigns logs <id> --follow --format human
+suntropy satvolt campaigns funnel <id>
+suntropy satvolt campaigns usage <id>
+suntropy satvolt campaigns reset <id> --yes --start
+suntropy satvolt campaigns resume <id> --action AI_AGENT --config @agent-step.json
+
+# Pipeline configuration (JSON)
+suntropy satvolt config get <id> --save pipeline.json
+suntropy satvolt config update <id> --data @pipeline.json      # full replace
+suntropy satvolt config patch <id> --data @patch.json          # merge by step uid
+suntropy satvolt steps list <id>
+suntropy satvolt steps add <id> --action QUALIFY --config '{"qualificationDefinition":"..."}'
+suntropy satvolt steps set <id> <uid> --config '{"enableWebSearch":true}'
+suntropy satvolt steps remove <id> <uid>
+suntropy satvolt steps run <id> <uid>
+
+# Leads
+suntropy satvolt leads list <id> --name "logistica" --page 2
+suntropy satvolt leads list <id> --step QUALIFY --step-status failure
+suntropy satvolt leads get <id> <leadId> --full-data consumptionEstimate
+suntropy satvolt leads fields <id>                             # paths for export columns
+
+# Export tables
+suntropy satvolt export-tables create <id> --name "CRM" \
+  --columns "Empresa=lead.commercialName;Consumo=fullData.consumptionEstimate.annualKwh:number"
+suntropy satvolt export-tables patch <tableId> --add-columns "Teléfono=lead.phone"
+suntropy satvolt export-tables data <tableId> --format csv
+suntropy satvolt export-tables export <tableId> --file-format xlsx --out leads.xlsx
+```
+
+JSON arguments (`--steps`, `--config`, `--data`, `--columns`, `--polygon`) accept
+inline JSON, `@file.json` or `-` for stdin. Errors keep the API `code` and
+validation `details` (step index, uid and field). `reset` is in the `delete`
+permission tier; `start`, `resume`, `run`, `patch` and `duplicate` are `write`.
+See [`skills/satvolt-campaign.md`](skills/satvolt-campaign.md) for the full workflow.
+
 ### `suntropy config` - Configuration
 
 ```bash
@@ -339,7 +393,7 @@ Config stored in `~/.suntropy/config.json`. Supports multiple profiles for diffe
 }
 ```
 
-Local development uses port-based routing: solar=8086, security=8080, profiles=8085, periods=8084, templates=8090.
+Local development uses port-based routing: solar=8086, security=8080, profiles=8085, periods=8084, templates=8090, satvolt=8099.
 
 ## Skills
 
@@ -350,3 +404,4 @@ Available skills:
 - **solar-study** - End-to-end solar study creation workflow
 - **inventory-create** - Create inventory items (panels, inverters, batteries, etc.)
 - **inventory-create-kit** - Create kits with components and custom assets
+- **satvolt-campaign** - Create, configure, follow and export Satvolt campaigns

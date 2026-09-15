@@ -84,12 +84,15 @@ export function setStoredCommandProfile(tier: CommandTier | null): void {
 // command/group names, so e.g. `studies set name` inherits `write` from `set`,
 // and `inventory kits panels delete` inherits `delete` from `delete`.
 
-const DELETE_VERBS = new Set(['delete', 'delete-batch', 'archive']);
+// `reset` wipes a Satvolt campaign's leads and processing data, so it is destructive.
+const DELETE_VERBS = new Set(['delete', 'delete-batch', 'archive', 'reset']);
 
 const WRITE_VERBS = new Set([
   'create', 'update', 'edit', 'set', 'add', 'remove', 'assemble', 'featured',
   'save', 'init', 'init-default', 'add-comment', 'comment', 'send',
   'calculate-results', 'optimize-peakpower',
+  // satvolt: these launch pipeline work (spending credits) or change configuration.
+  'patch', 'start', 'resume', 'run', 'duplicate',
 ]);
 
 /**
