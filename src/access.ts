@@ -92,7 +92,7 @@ const WRITE_VERBS = new Set([
   'save', 'init', 'init-default', 'add-comment', 'comment', 'send',
   'calculate-results', 'optimize-peakpower',
   // satvolt: these launch pipeline work (spending credits) or change configuration.
-  'patch', 'start', 'resume', 'run', 'duplicate',
+  'patch', 'start', 'resume', 'run', 'duplicate', 'extend',
 ]);
 
 /**

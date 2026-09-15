@@ -131,6 +131,20 @@ Si se añadió antes un paso con `steps add` y nunca se ejecutó, `steps list` l
 suntropy satvolt steps run <campaignId> <uid>
 ```
 
+### Ampliar una campaña con más leads
+
+Para sacar más leads de una campaña de Maps ya terminada (típico tras una sonda) usa `extend`, no `reset`. `reset` borra los leads y vuelve a pagarlos todos. `extend` sube el límite, o lo quita con `--no-limit`, y vuelve a buscar solo en los sectores que se quedaron a medias. Los leads que ya existen no se reprocesan; solo los nuevos pasan por el pipeline.
+
+```bash
+suntropy satvolt campaigns get <campaignId>                  # sectorSearch: incomplete + unknown > 0 → quedan leads por buscar
+suntropy satvolt campaigns extend <campaignId> --max-leads 500
+suntropy satvolt campaigns extend <campaignId> --no-limit     # barre entero cada sector pendiente
+```
+
+- El nuevo límite tiene que ser mayor que los leads actuales. La campaña no puede estar en ejecución (409 `CAMPAIGN_RUNNING`) ni sin arrancar (409 `CAMPAIGN_NOT_STARTED`).
+- Coste ≈ leads nuevos × créditos por lead de la campaña (míralo con `campaigns usage`). Enséñaselo al usuario y pide confirmación antes de ampliar.
+- En las campañas creadas antes de esta función, los sectores salen como `unknown` y cuentan como pendientes: se repiten sus primeras peticiones a Places, pero los duplicados no se crean.
+
 ### Consumo y reinicio
 
 ```bash

@@ -199,6 +199,39 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
       }
     });
 
+  // --- extend ---
+  campaigns
+    .command('extend <campaignId>')
+    .description(
+      'Get more leads from a finished Maps campaign without relaunching it: raises (or\n' +
+        'removes) its lead limit and searches again only in the sectors whose search was\n' +
+        'cut short. Existing leads are kept and only the new ones go through the pipeline\n' +
+        '(spends credits). `campaigns get` shows sectorSearch: incomplete + unknown > 0\n' +
+        'means more leads can still be found.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt campaigns extend 62 --max-leads 500\n' +
+        '  suntropy satvolt campaigns extend 62 --no-limit',
+    )
+    .option('--max-leads <n>', 'New lead limit (must be greater than the current number of leads)')
+    .option('--no-limit', 'Remove the lead limit and search every pending sector fully')
+    .action(async (campaignId, opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        // commander turns --no-limit into opts.limit === false.
+        const removeLimit = opts.limit === false;
+        if (removeLimit === (opts.maxLeads !== undefined)) {
+          throw new Error('Pass exactly one of --max-leads <n> or --no-limit.');
+        }
+        const maxLeads = removeLimit ? null : parseIntOption(opts.maxLeads, '--max-leads');
+        const data = await call(satvoltClient(global, 120000), 'post', `/campaigns/${parseId(campaignId, 'campaignId')}/extend`, {
+          data: { maxLeads },
+        });
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
   // --- resume ---
   campaigns
     .command('resume <campaignId>')
