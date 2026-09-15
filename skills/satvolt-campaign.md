@@ -11,7 +11,8 @@ Cada acción del pipeline gasta créditos por lead (1 crédito = 0,005 €). Ant
 | Consulta de texto (en vez de búsqueda por cercanía) | No | - |
 | Máximo de leads | No | sin límite |
 | Grupos de negocio | No | `businesses` |
-| Pasos del pipeline (acciones y su config) | No | ninguno: solo descubre leads |
+| Plantilla o campaña base (pasos, grupos, límite) | No | - |
+| Pasos del pipeline (acciones y su config) | No | los de la base; sin base, ninguno (solo descubre leads) |
 | Arrancar al crear | No | no (queda en cola) |
 
 ## Ejecución
@@ -30,6 +31,8 @@ Reglas del catálogo:
 - Si falta una dependencia (p. ej. ESTIMATE_CONSUMPTION necesita FIND_ROOFTOP), el backend la añade y lo avisa en `warnings`.
 
 ### Paso 1: Pasos del pipeline
+
+Si ya hay una plantilla o una campaña con el pipeline que se quiere, úsala como base y sáltate este paso (`templates list`, `--template` o `--from-campaign` en el paso 2). Si el pipeline es nuevo y se va a repetir, guárdalo como plantilla: `templates create --name ... --steps @steps.json`.
 
 Escribe los pasos LEAD en orden en un fichero. SECTORIZE, FIND_LEADS y COMPLETE los pone el backend:
 
@@ -59,6 +62,10 @@ suntropy satvolt campaigns create --name "<nombre>" --bounds <nwLat>,<nwLng>,<se
 
 # Polígono ([[lat,lng],...] o GeoJSON). Se busca en su rectángulo envolvente: avisa al usuario.
 suntropy satvolt campaigns create --name "<nombre>" --polygon @area.geojson --steps @steps.json
+
+# Desde una plantilla o copiando otra campaña (los flags explícitos tienen prioridad)
+suntropy satvolt campaigns create --name "<nombre>" --template "<plantilla>" --circle <lat>,<lng> --radius <m>
+suntropy satvolt campaigns create --name "<nombre>" --from-campaign <id> --bounds <nwLat>,<nwLng>,<seLat>,<seLng> --max-leads 100
 ```
 
 La respuesta trae `campaign.idCampaign`, `estimatedCreditsPerLead` y `warnings`. La campaña queda en `queued`.
@@ -81,6 +88,7 @@ suntropy satvolt leads list <campaignId> --name "logística"
 suntropy satvolt leads list <campaignId> --step QUALIFY --step-status failure   # uid del paso si la acción se repite
 suntropy satvolt leads list <campaignId> --step <uid> --step-status pending
 suntropy satvolt leads get <campaignId> <leadId> --full-data consumptionEstimate,qualification_<uid>
+suntropy satvolt leads full-data <campaignId> <leadId> --path cif.response.extras.cnae
 ```
 
 `--step-status`: `reached` (por defecto), `success`, `failure`, `skipped`, `processing` o `pending`.
@@ -131,6 +139,8 @@ Si se añadió antes un paso con `steps add` y nunca se ejecutó, `steps list` l
 suntropy satvolt steps run <campaignId> <uid>
 ```
 
+Para repetir un paso en leads concretos (p. ej. tras un fallo) usa `leads run-step <campaignId> <leadId> <uid|ACCIÓN>`: solo ese paso, o `--continue` para seguir el pipeline. La skill `satvolt-lead-troubleshooting` detalla cuándo usar cada uno.
+
 ### Ampliar una campaña con más leads
 
 Para sacar más leads de una campaña de Maps ya terminada (típico tras una sonda) usa `extend`, no `reset`. `reset` borra los leads y vuelve a pagarlos todos. `extend` sube el límite, o lo quita con `--no-limit`, y vuelve a buscar solo en los sectores que se quedaron a medias. Los leads que ya existen no se reprocesan; solo los nuevos pasan por el pipeline.
@@ -145,12 +155,15 @@ suntropy satvolt campaigns extend <campaignId> --no-limit     # barre entero cad
 - Coste ≈ leads nuevos × créditos por lead de la campaña (míralo con `campaigns usage`). Enséñaselo al usuario y pide confirmación antes de ampliar.
 - En las campañas creadas antes de esta función, los sectores salen como `unknown` y cuentan como pendientes: se repiten sus primeras peticiones a Places, pero los duplicados no se crean.
 
-### Consumo y reinicio
+### Consumo, reinicio y borrado
 
 ```bash
 suntropy satvolt campaigns usage <campaignId> --format human   # créditos totales, por lead y por paso
 suntropy satvolt campaigns reset <campaignId> --yes [--start]  # BORRA leads y resultados; pide confirmación explícita al usuario
+suntropy satvolt campaigns delete <campaignId> --yes           # borra la campaña entera; pide confirmación explícita al usuario
 ```
+
+Para sacar más leads de una campaña ya terminada, usa `extend` (sección anterior), nunca `reset`.
 
 ## Errores
 
