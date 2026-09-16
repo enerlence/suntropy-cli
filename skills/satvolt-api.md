@@ -46,7 +46,33 @@ curl -s -H "Authorization: Bearer $TOKEN" "$API/campaigns?state=completed&limit=
 | POST | `/campaigns/:id/resume` | `{ "step": { "action": "AI_AGENT", "config": {...} } }`: lo añade al final y lo ejecuta sobre los leads |
 | GET | `/campaigns/:id/usage` | `?include=leads`: créditos totales, por paso y, opcionalmente, por lead |
 | GET | `/campaigns/:id/logs` | `?limit&sinceTs&level=debug\|log\|warn\|error` → `{ entries, lastTs }` |
-| GET | `/campaigns/:id/funnel` | Por paso LEAD: `reached`, `success`, `failure`, `skipped`, `processing` y `pending`, más `leadStates` |
+| GET | `/campaigns/:id/funnel` | Por paso LEAD: `reached`, `success`, `failure`, `skipped`, `processing` y `pending`, más `leadStates`. `criteria` (o `null`) añade `met`/`unmet` según el `successIf` del paso |
+
+### Criterio de éxito y reintentos por paso
+
+Ejecutar un paso y que traiga el dato son cosas distintas: un agente puede terminar en
+`success` respondiendo que no encontró nada. Dos claves de `config`, admitidas por
+cualquier acción, lo separan:
+
+```jsonc
+{ "successIf": ["response.linkedinUrl"], "maxRetries": 2 }
+```
+
+- `successIf`: rutas que deben traer valor. Relativas a lo que el paso escribe (en un
+  agente, a su `response`) o absolutas con `fullData.`/`lead.`. Vacío = `null`, `""`,
+  `[]` o `{}`; `false` y `0` sí son datos.
+- `maxRetries` (0-5): repite el paso mientras no se cumpla el criterio. Los créditos se
+  cobran una sola vez por paso, no por intento. Agotados los intentos, el lead sigue al
+  paso siguiente y la ejecución queda con `metadata.successCriteria.met = false`.
+
+El criterio se evalúa sobre los datos actuales del lead, así que `funnel` lo recalcula al
+vuelo: cámbialo con `PATCH /campaigns/:id/configuration` y vuelve a medir sin re-ejecutar.
+
+```bash
+curl -s -X PATCH -H "$H" "$API/campaigns/$ID/configuration" \
+  -d '{"steps":[{"uid":"7f3edaf055d60627","config":{"successIf":["response.linkedinUrl"],"maxRetries":2}}]}'
+curl -s -H "$H" "$API/campaigns/$ID/funnel" | jq '.data.steps[] | {name, reached, criteria}'
+```
 
 ### Crear campaña
 

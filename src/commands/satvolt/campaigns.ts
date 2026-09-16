@@ -340,17 +340,59 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
   // --- funnel ---
   campaigns
     .command('funnel <campaignId>')
+    .summary('Leads per pipeline step, by execution or by success criteria')
     .description(
       'Funnel of the campaign: for each LEAD step, how many leads reached it and how many\n' +
         'succeeded, failed, were skipped, are processing (async) or still pending, plus\n' +
-        'the lead counts by state.',
+        'the lead counts by state.\n' +
+        '\n' +
+        '--mode success shows how many leads the step actually brought data for, which is\n' +
+        'not the same thing: an agent can finish without error answering that it found\n' +
+        'nothing. It uses the `successIf` paths configured on each step, evaluated against\n' +
+        "the lead's current data — change the criteria and the numbers change, with no\n" +
+        're-run. Steps without criteria fall back to their successful executions.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt campaigns funnel 62\n' +
+        '  suntropy satvolt campaigns funnel 62 --mode success',
     )
-    .action(async (campaignId) => {
+    .option('--mode <mode>', 'execution (default) | success', 'execution')
+    .action(async (campaignId, opts) => {
       const global = getGlobalOpts(campaigns);
       try {
+        const mode = String(opts.mode || 'execution').toLowerCase();
+        if (mode !== 'execution' && mode !== 'success') {
+          outputError({ code: 'INVALID_MODE', message: '--mode must be execution or success' });
+          return;
+        }
         const data = await call(satvoltClient(global, 120000), 'get', `/campaigns/${parseId(campaignId, 'campaignId')}/funnel`);
         if (global.format === 'human' || global.format === 'csv') {
-          output(data.steps, global);
+          output(
+            (data.steps ?? []).map((s: any) =>
+              mode === 'success'
+                ? {
+                    step: s.name,
+                    action: s.action,
+                    reached: s.reached,
+                    withData: s.criteria ? s.criteria.met : s.success,
+                    pctOfTotal: s.criteria ? s.criteria.metPct : s.reachedPct,
+                    missingData: s.criteria ? s.criteria.unmet : '',
+                    retries: s.criteria?.maxRetries || '',
+                    successIf: s.criteria ? s.criteria.paths.join(', ') : '(no criteria)',
+                  }
+                : {
+                    step: s.name,
+                    action: s.action,
+                    reached: s.reached,
+                    pctOfTotal: s.reachedPct,
+                    success: s.success,
+                    failure: s.failure,
+                    skipped: s.skipped,
+                    processing: s.processing,
+                    pending: s.pending,
+                  },
+            ),
+            global,
+          );
           return;
         }
         output(data, global);
