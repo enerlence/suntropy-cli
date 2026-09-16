@@ -36,6 +36,7 @@ suntropy satvolt leads get <id> <leadId> --format json
 | ESTIMATE_CONSUMPTION: `Catastral parcel with reference is required` | El lead no tiene parcela (FIND_ROOFTOP falló o no la encontró) | Arregla antes FIND_ROOFTOP en ese lead |
 | QUALIFY o AI_AGENT se quedan en `processing` | El agente no llamó al webhook (Suntropy AI o Devic caídos, o no alcanzan la URL del backend) | Comprueba los servicios; cuando lleguen, relanza el paso |
 | AI_AGENT `skipped` en muchos leads | `skipIfEmpty` apunta a un dato vacío (p. ej. LinkedIn de empresa no encontrado) | No es un error: no se cobra y el lead sigue |
+| El paso sale `success` pero la columna llega vacía | El agente terminó sin error respondiendo que no encontró el dato | Mídelo con `campaigns funnel <id> --mode success`; define `successIf` en el paso y, si no es determinista, `maxRetries` |
 | Paso con config inválida (`VALIDATION_ERROR` al editar) | Falta un campo obligatorio de `configSchema` | Corrígelo con `steps set <id> <uid> --config ...` |
 | Resultados raros en todos los leads (p. ej. consumo con confianza "baja") | Configuración mejorable, no un fallo: `cnaeTemplate` vacío, orden de pasos… | Ver `satvolt-probe-to-full-campaign`, paso 5 |
 

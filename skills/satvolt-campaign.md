@@ -82,7 +82,25 @@ Enséñale al usuario el rango y pide confirmación. Las ejecuciones fallidas o 
 suntropy satvolt campaigns start <campaignId>
 suntropy satvolt campaigns logs <campaignId> --follow --format human   # termina solo al acabar la campaña
 suntropy satvolt campaigns funnel <campaignId> --format human           # alcanzados/success/failure/processing por paso
+suntropy satvolt campaigns funnel <campaignId> --mode success           # en cuántos leads el paso trajo el dato
 ```
+
+**Ejecutar ≠ acertar.** Un agente puede terminar sin error respondiendo que no encontró
+nada: el paso cuenta como `success` y la columna se queda vacía. Para medirlo, cada paso
+admite dos claves de config comunes:
+
+| Clave | Qué hace |
+|---|---|
+| `successIf` | Rutas que el paso debe rellenar para contar como útil. Relativas a lo que escribe el paso (en un agente, a su respuesta: `response.linkedinUrl`) o absolutas con `fullData.`/`lead.`. Al ser relativas, sobreviven a copiar la campaña o guardarla como plantilla. |
+| `maxRetries` | 0-5. Repite el paso mientras no se cumpla `successIf`. Para pasos no deterministas (agentes, identificación de paneles). Los créditos se cobran una vez por paso, no por intento; agotados los intentos el lead continúa al paso siguiente. |
+
+```bash
+suntropy satvolt steps set <campaignId> <stepUid> \
+  --config '{"successIf":["response.linkedinUrl"],"maxRetries":2}'
+```
+
+El criterio se evalúa sobre los datos actuales del lead, así que se puede cambiar y volver
+a medir una campaña ya terminada sin re-ejecutar nada.
 
 ### Paso 4: Revisar leads
 

@@ -160,8 +160,18 @@ export function registerSatvoltPipelineCommands(satvolt: Command): void {
     .description(
       'Change one step: merge --config into its config (null resets a key to its default), or replace it\n' +
         'with --replace-config; enable/disable; move with --before/--after.\n' +
-        'Example:\n' +
-        '  suntropy satvolt steps set 59 95161b8b080180e4 --config \'{"outputKey":"company"}\'',
+        '\n' +
+        'Every step also takes two common config keys, whatever its action:\n' +
+        '  skipIfEmpty  path that, when empty, skips the step for that lead\n' +
+        '  successIf    paths the step must fill for its result to count as useful, relative\n' +
+        '               to what the step writes (an agent: relative to its response), or\n' +
+        '               absolute with fullData./lead.  Feeds `campaigns funnel --mode success`\n' +
+        '  maxRetries   0-5. Repeats the step while successIf is not met. Credits are charged\n' +
+        '               once per step, not per attempt; if the last attempt still has no data\n' +
+        '               the lead carries on to the next step.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt steps set 59 95161b8b080180e4 --config \'{"outputKey":"company"}\'\n' +
+        '  suntropy satvolt steps set 62 7f3edaf055d60627 --config \'{"successIf":["response.linkedinUrl"],"maxRetries":2}\'',
     )
     .option('--config <json>', 'Config JSON, @file or -')
     .option('--replace-config', 'Replace the whole config instead of merging')
