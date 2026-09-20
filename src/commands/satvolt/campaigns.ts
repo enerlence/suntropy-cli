@@ -58,7 +58,7 @@ function buildArea(opts: Record<string, string | undefined>) {
 export function registerSatvoltCampaignCommands(satvolt: Command): void {
   const campaigns = satvolt
     .command('campaigns')
-    .description('Satvolt campaigns: list, create from an area, start, reset, resume, usage, logs and funnel.');
+    .description('Satvolt campaigns: list, create from an area, start, pause, cancel, reset, resume, usage, logs and funnel.');
 
   // --- list ---
   campaigns
@@ -176,6 +176,59 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
       }
     });
 
+  // --- estimate ---
+  campaigns
+    .command('estimate')
+    .summary('Count the businesses a campaign would find over an area, without creating it.')
+    .description(
+      'Preview of FIND_LEADS: how many businesses Google Maps returns inside the area with\n' +
+        'the given business groups (nearby search) or text query, plus a sample to inspect.\n' +
+        'Nothing is created and no credits are spent. Use it to iterate the filters before\n' +
+        '`campaigns create`: check `places.atLeast`, `byType` and the `sample` names, then\n' +
+        'tighten or widen --business-groups until the sample looks like the target.\n\n' +
+        'The count is a minimum: the preview has a request budget and is cached (7 days) per\n' +
+        'area, groups and query; `places.exhaustive:false` means dense zones were left out.\n' +
+        'A text query matches place NAMES, not categories ("manufactura" only finds businesses\n' +
+        'called "Manufacturas …"): for a category, use business groups without --search-query.\n\n' +
+        'Area (exactly one): --circle <lat,lng> --radius <m> | --bounds <nwLat,nwLng,seLat,seLng>\n' +
+        '| --polygon <json|@file|->. Base (optional): --template or --from-campaign give the\n' +
+        'groups and query when not passed explicitly.\n\n' +
+        'Examples:\n' +
+        '  suntropy satvolt campaigns estimate --circle 43.3934,-3.8445 --radius 1500 \\\n' +
+        '    --business-groups businesses --format human\n' +
+        '  suntropy satvolt campaigns estimate --circle 43.3934,-3.8445 --radius 1500 \\\n' +
+        '    --business-groups industrial_logistics,automotive --sample 50\n' +
+        '  suntropy satvolt campaigns estimate --bounds 40.45,-3.70,40.44,-3.68 --template "Industria"',
+    )
+    .option('--circle <lat,lng>', 'Circle center')
+    .option('--radius <meters>', 'Circle radius in meters')
+    .option('--bounds <nwLat,nwLng,seLat,seLng>', 'Rectangle corners')
+    .option('--polygon <json>', 'Polygon points, GeoJSON, @file or - for stdin')
+    .option('--template <idOrName>', 'Take business groups and query from a campaign template')
+    .option('--from-campaign <id>', 'Take business groups and query from another Maps campaign')
+    .option('--business-groups <ids>', 'Comma-separated group ids or raw Google Places types. See: satvolt catalog business-groups')
+    .option('--search-query <text>', 'Places text search with this query instead of nearby search (matches names, not categories)')
+    .option('--sample <n>', 'Sample places to return (1-100, default 20)')
+    .option('--offset <n>', 'Skip this many sample places (to page through them)')
+    .action(async (opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        const body: Record<string, unknown> = { area: buildArea(opts) };
+        if (opts.template && opts.fromCampaign) throw new Error('Use either --template or --from-campaign, not both');
+        if (opts.template) body.templateId = opts.template;
+        if (opts.fromCampaign) body.fromCampaignId = parseId(opts.fromCampaign, '--from-campaign');
+        if (opts.businessGroups) body.businessGroups = opts.businessGroups.split(',').map((s: string) => s.trim()).filter(Boolean);
+        if (opts.searchQuery) body.searchQuery = opts.searchQuery;
+        if (opts.sample !== undefined) body.sample = parseIntOption(opts.sample, '--sample');
+        if (opts.offset !== undefined) body.offset = parseIntOption(opts.offset, '--offset');
+
+        const data = await call(satvoltClient(global, 120000), 'post', '/campaigns/estimate', { data: body });
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
   // --- delete ---
   campaigns
     .command('delete <campaignId>')
@@ -206,6 +259,74 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
       const global = getGlobalOpts(campaigns);
       try {
         const data = await call(satvoltClient(global), 'post', `/campaigns/${parseId(campaignId, 'campaignId')}/start`);
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  // --- pause ---
+  campaigns
+    .command('pause <campaignId>')
+    .summary('Pause a running campaign: nothing else runs or is charged until unpause.')
+    .description(
+      'Pause a running campaign. Queued work is withdrawn and steps already in flight\n' +
+        'finish without queuing their successors, so no more credits are spent. Results\n' +
+        'of async steps whose webhook arrives meanwhile are kept. Only a running\n' +
+        'campaign (inProgress, sectorized, leadsFound, analyzed) can be paused;\n' +
+        'otherwise 409 INVALID_CAMPAIGN_STATE.\n' +
+        'Example:\n' +
+        '  suntropy satvolt campaigns pause 72',
+    )
+    .action(async (campaignId) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        const data = await call(satvoltClient(global, 120000), 'post', `/campaigns/${parseId(campaignId, 'campaignId')}/pause`);
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  // --- unpause ---
+  campaigns
+    .command('unpause <campaignId>')
+    .summary('Resume a paused campaign where it stopped (no step is run twice).')
+    .description(
+      'Resume a paused campaign where it stopped: every lead that is not finished gets\n' +
+        'its next pending step queued, and steps already executed are neither re-run\n' +
+        'nor charged again. Only a paused campaign can be unpaused. This is not\n' +
+        '`resume`, which appends a NEW step to a finished campaign.\n' +
+        'Example:\n' +
+        '  suntropy satvolt campaigns unpause 72',
+    )
+    .action(async (campaignId) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        const data = await call(satvoltClient(global, 120000), 'post', `/campaigns/${parseId(campaignId, 'campaignId')}/unpause`);
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  // --- cancel ---
+  campaigns
+    .command('cancel <campaignId>')
+    .summary('Cancel a running or paused campaign for good, keeping its leads and data (--yes).')
+    .description(
+      'Cancel a running, paused or queued campaign. Irreversible: it cannot be unpaused\n' +
+        'or started again (reset relaunches it from scratch, deleting the leads). Leads\n' +
+        'and the data already enriched are kept, can be exported and are still charged.\n' +
+        'Example:\n' +
+        '  suntropy satvolt campaigns cancel 72 --yes',
+    )
+    .option('--yes', 'Confirm the cancellation (required)')
+    .action(async (campaignId, opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        if (!opts.yes) throw new Error('Cancelling a campaign is irreversible. Re-run with --yes to confirm.');
+        const data = await call(satvoltClient(global, 120000), 'post', `/campaigns/${parseId(campaignId, 'campaignId')}/cancel`);
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
