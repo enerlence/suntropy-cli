@@ -22,7 +22,9 @@ export function registerSatvoltCommands(program: Command): void {
         '  satvolt export-tables create <id> ... · satvolt export-tables export <tableId>\n' +
         '  satvolt campaigns resume <id> --action AI_AGENT --config @step.json\n' +
         '  satvolt templates create --name <n> --from-campaign <id> · campaigns create --template <n>\n' +
-        '  satvolt campaigns extend <id> --max-leads N · leads run-step <id> <leadId> <step>',
+        '  satvolt campaigns extend <id> --max-leads N · leads run-step <id> <leadId> <step>\n' +
+        '  satvolt campaigns pause <id> · unpause <id> · cancel <id> --yes\n' +
+        '  satvolt usage [--month YYYY-MM]              credits spent by the account this month',
     );
 
   registerSatvoltCampaignCommands(satvolt);
@@ -30,6 +32,43 @@ export function registerSatvoltCommands(program: Command): void {
   registerSatvoltLeadCommands(satvolt);
   registerSatvoltExportTableCommands(satvolt);
   registerSatvoltTemplateCommands(satvolt);
+
+  // --- usage (account) ---
+  satvolt
+    .command('usage')
+    .summary('Credits spent by the whole account in a calendar month, by campaign and by step.')
+    .description(
+      'Credits spent by the whole account in a calendar month (UTC): total, previous\n' +
+        'month for comparison, and the breakdown by campaign and by step. It sums every\n' +
+        'charge in the period, including the Google Maps search (FIND_LEADS), so it\n' +
+        'does not have to match `campaigns usage`, which reconstructs the cost of one\n' +
+        'campaign and leaves the search out.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt usage\n' +
+        '  suntropy satvolt usage --month 2026-08 --format human',
+    )
+    .option('--month <YYYY-MM>', 'Month to report (default: current month)')
+    .action(async (opts) => {
+      const global = getGlobalOpts(satvolt);
+      try {
+        if (opts.month !== undefined && !/^\d{4}-\d{2}$/.test(String(opts.month))) {
+          throw new Error('--month must be YYYY-MM, e.g. 2026-08');
+        }
+        const data = await call(satvoltClient(global, 120000), 'get', '/usage', { params: { month: opts.month } });
+        if (global.format === 'human' || global.format === 'csv') {
+          if (global.format === 'human') {
+            process.stderr.write(
+              `${data.month}: ${data.credits} credits · ${data.executions} executions · previous month (${data.previous.month}): ${data.previous.credits} credits\n\n`,
+            );
+          }
+          output(data.byCampaign, global);
+          return;
+        }
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
 
   const catalog = satvolt
     .command('catalog')
