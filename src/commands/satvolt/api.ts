@@ -18,12 +18,40 @@ export function getGlobalOpts(cmd: Command): GlobalOpts {
 }
 
 /**
+ * Satvolt is only deployed on the dev cluster; there is no Satvolt behind
+ * `api.enerlence.com` yet, so the path-based routing of `getServiceUrl` would
+ * send every call to a 404. While the preliminary testing phase lasts, any
+ * non-local server is rewritten to dev so `suntropy satvolt ...` works with
+ * the default profile without having to remember `--server`.
+ *
+ * TODO: drop this once Satvolt is deployed to production — `getServiceUrl`
+ * already resolves `<server>/satvolt` on its own.
+ */
+export const SATVOLT_DEV_BASE_URL = 'https://api-dev.suntropy.domain.eu.axebow.cloud/satvolt';
+
+/**
+ * Two escape hatches so the hardcoded host does not get in the way:
+ * `SUNTROPY_SATVOLT_URL` points anywhere, and a local server is left alone so
+ * developing against `localhost:8099` still works.
+ */
+function resolveSatvoltBaseUrl(resolved: string): string {
+  const override = process.env.SUNTROPY_SATVOLT_URL?.trim();
+  if (override) return override.replace(/\/+$/, '');
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(resolved)) return resolved;
+  return SATVOLT_DEV_BASE_URL;
+}
+
+/**
  * Client for the Satvolt public API (`/api/v1` on the satvolt service:
  * `<server>/satvolt/api/v1` in production, `localhost:8099/api/v1` locally).
  */
 export function satvoltClient(global: GlobalOpts, timeout = 60000): AxiosInstance {
   const client = createServiceClient('satvolt', global);
-  client.defaults.baseURL = `${client.defaults.baseURL}/api/v1`;
+  const base = resolveSatvoltBaseUrl(client.defaults.baseURL ?? '');
+  if (global.verbose && base !== client.defaults.baseURL) {
+    process.stderr.write(`\u2192 satvolt pinned to ${base} (preliminary testing phase)\n`);
+  }
+  client.defaults.baseURL = `${base}/api/v1`;
   client.defaults.timeout = timeout;
   return client;
 }

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { output, outputError } from '../../output.js';
-import { call, getGlobalOpts, satvoltClient, satvoltError } from './api.js';
+import { call, getGlobalOpts, satvoltClient, satvoltError, SATVOLT_DEV_BASE_URL } from './api.js';
 import { registerSatvoltCampaignCommands } from './campaigns.js';
 import { registerSatvoltPipelineCommands } from './pipeline.js';
 import { registerSatvoltLeadCommands } from './leads.js';
@@ -12,6 +12,8 @@ export function registerSatvoltCommands(program: Command): void {
     .command('satvolt')
     .description(
       'Satvolt lead-generation campaigns (public API /satvolt/api/v1), with the same auth token.\n' +
+        `Preliminary testing phase: every call is pinned to the dev cluster (${SATVOLT_DEV_BASE_URL}),\n` +
+        'whatever the active profile says. Override with SUNTROPY_SATVOLT_URL, or use a localhost server.\n' +
         'Typical flow:\n' +
         '  satvolt catalog actions                      actions and their config schema\n' +
         '  satvolt campaigns create --circle ... --steps @steps.json\n' +
