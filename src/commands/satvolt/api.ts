@@ -78,6 +78,32 @@ export async function call<T = any>(
   return res.data?.data as T;
 }
 
+/**
+ * Same as `call`, for the endpoints that take a file: the Excel goes as the
+ * multipart field `file` and the rest of the body as a JSON string in `payload`.
+ */
+export async function callMultipart<T = any>(
+  client: AxiosInstance,
+  path: string,
+  filePath: string,
+  payload?: Record<string, unknown>,
+  params?: Record<string, unknown>,
+): Promise<T> {
+  const FormData = (await import('form-data')).default;
+  const form = new FormData();
+  form.append('file', readFileSync(filePath), { filename: filePath.split('/').pop() });
+  if (payload) form.append('payload', JSON.stringify(payload));
+  const res = await client.request<Envelope<T>>({
+    method: 'post',
+    url: path,
+    params: dropEmpty(params),
+    data: form,
+    headers: form.getHeaders(),
+    maxBodyLength: Infinity,
+  });
+  return res.data?.data as T;
+}
+
 function dropEmpty(params?: Record<string, unknown>) {
   if (!params) return undefined;
   return Object.fromEntries(

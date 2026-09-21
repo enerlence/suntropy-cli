@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { output, outputError, outputPaginated } from '../../output.js';
 import {
   call,
+  callMultipart,
   getGlobalOpts,
   parseId,
   parseIntOption,
@@ -223,6 +224,148 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         if (opts.offset !== undefined) body.offset = parseIntOption(opts.offset, '--offset');
 
         const data = await call(satvoltClient(global, 120000), 'post', '/campaigns/estimate', { data: body });
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  // --- excel ---
+  const columnFlag = (value?: string) => (value ? { column: value } : undefined);
+  const columnsList = (value?: string) =>
+    value ? value.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+
+  campaigns
+    .command('excel-preview <file>')
+    .summary('Headers and first rows of an Excel, to decide the column mapping.')
+    .description(
+      'Reads the first sheet of an .xlsx (headers in row 1) and returns `headers`,\n' +
+        '`sampleRows` and `totalRows`, without creating anything. Run it before\n' +
+        '`create-from-excel` to see which column holds the name, the address parts,\n' +
+        'the coordinates ("lat,lng"), the phone, the website or the email.\n\n' +
+        'Example:\n' +
+        '  suntropy satvolt campaigns excel-preview empresas.xlsx --sample 10 --format human',
+    )
+    .option('--sample <n>', 'Rows to return (1-50, default 5)')
+    .action(async (file, opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        const data = await callMultipart(satvoltClient(global), '/campaigns/excel/preview', file, undefined, {
+          sampleSize: opts.sample !== undefined ? parseIntOption(opts.sample, '--sample') : undefined,
+        });
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  campaigns
+    .command('excel-geocode-test <file>')
+    .summary('Geocode the first rows with the chosen address columns, before creating.')
+    .description(
+      'When the Excel has no coordinates, the campaign geocodes each row from the\n' +
+        'columns you choose (concatenated with commas). This runs that geocoding on the\n' +
+        'first rows only and shows the query, the coordinates and the formatted address\n' +
+        'found, so you can check the columns are right before paying for every lead.\n' +
+        'Costs one Google geocoding request per sampled row.\n\n' +
+        'Example:\n' +
+        '  suntropy satvolt campaigns excel-geocode-test empresas.xlsx \\\n' +
+        '    --columns "Dirección,CP,Municipio" --region Cantabria --sample 5 --format human',
+    )
+    .requiredOption('--columns <headers>', 'Comma-separated Excel headers that form the address, in order')
+    .option('--sample <n>', 'Rows to test (1-25, default 5)')
+    .option('--region <text>', 'Region appended to every query to disambiguate (province, country)')
+    .action(async (file, opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        const data = await callMultipart(satvoltClient(global, 120000), '/campaigns/excel/geocode-test', file, {
+          columns: columnsList(opts.columns),
+          sampleSize: opts.sample !== undefined ? parseIntOption(opts.sample, '--sample') : undefined,
+          region: opts.region,
+        });
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  campaigns
+    .command('create-from-excel <file>')
+    .summary('Create a campaign whose leads come from an Excel (no Maps search).')
+    .description(
+      'Imports the rows of the first sheet as leads (one row = one lead) and builds the\n' +
+        'pipeline on them. The campaign stays queued unless --start is passed, and it\n' +
+        'cannot be extended later: the leads are fixed at creation.\n\n' +
+        'Mapping (see `excel-preview` for the headers):\n' +
+        '  --name-column <h>            required: commercial name of the business\n' +
+        '  --coordinates-column <h>     column with "lat,lng"  — OR —\n' +
+        '  --geocode-columns <h1,h2>    address columns to geocode per lead (GEOCODE_ADDRESS,\n' +
+        '                               10 credits per lead; test them with excel-geocode-test)\n' +
+        '  --address-columns <h1,h2>    address shown on the lead (joined with ", ")\n' +
+        '  --phone-column, --url-column, --email-column, --type-column <h>\n' +
+        '  --country <text>             literal applied to every row\n' +
+        '  --mapping <json|@file>       full columnMapping object instead of the flags above\n\n' +
+        'Pipeline: --template, --from-campaign or --steps, as in `campaigns create`.\n\n' +
+        'Examples:\n' +
+        '  suntropy satvolt campaigns create-from-excel empresas.xlsx --name "Clientes CRM" \\\n' +
+        '    --name-column Empresa --geocode-columns "Dirección,CP,Municipio" --region Cantabria \\\n' +
+        '    --template "Industria" --max-leads 100\n' +
+        '  suntropy satvolt campaigns create-from-excel leads.xlsx --name "Con coordenadas" \\\n' +
+        '    --name-column Nombre --coordinates-column Coordenadas --phone-column Teléfono \\\n' +
+        '    --steps @steps.json',
+    )
+    .requiredOption('--name <name>', 'Campaign name')
+    .option('--name-column <header>', 'Column with the commercial name (required unless --mapping)')
+    .option('--coordinates-column <header>', 'Column with "lat,lng" coordinates')
+    .option('--geocode-columns <headers>', 'Comma-separated address columns to geocode when there are no coordinates')
+    .option('--address-columns <headers>', 'Comma-separated columns joined as the lead address')
+    .option('--phone-column <header>', 'Column with the phone')
+    .option('--url-column <header>', 'Column with the website')
+    .option('--email-column <header>', 'Column with the email (stored in fullData.importMetadata.email)')
+    .option('--type-column <header>', 'Column with the business type (googlePlacesType)')
+    .option('--country <text>', 'Country applied to every lead')
+    .option('--mapping <json>', 'columnMapping as JSON, @file or - (overrides the *-column flags)')
+    .option('--template <idOrName>', 'Base the pipeline on a campaign template')
+    .option('--from-campaign <id>', 'Copy the pipeline of another campaign')
+    .option('--steps <json>', 'LEAD steps as JSON array, @file or -')
+    .option('--max-leads <n>', 'Import only the first n rows')
+    .option('--region <text>', 'Region of the leads (also biases the geocoding)')
+    .option('--description <text>', 'Natural language description of the configuration')
+    .option('--start', 'Start the pipeline right after creating it (spends credits)')
+    .action(async (file, opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        const columnMapping: Record<string, unknown> = opts.mapping
+          ? readJsonArg(opts.mapping, '--mapping')
+          : {
+              commercialName: columnFlag(opts.nameColumn),
+              coordinates: columnFlag(opts.coordinatesColumn),
+              address: columnsList(opts.addressColumns)?.map((column) => ({ column })),
+              phone: columnFlag(opts.phoneColumn),
+              url: columnFlag(opts.urlColumn),
+              email: columnFlag(opts.emailColumn),
+              googlePlacesType: columnFlag(opts.typeColumn),
+              country: opts.country ? { literal: opts.country } : undefined,
+            };
+        if (!columnMapping.commercialName) throw new Error('--name-column is required (or a --mapping with commercialName)');
+        const geocodeColumns = columnsList(opts.geocodeColumns);
+        if (!columnMapping.coordinates && !geocodeColumns) {
+          throw new Error('Pass --coordinates-column <header> or --geocode-columns <h1,h2,...>');
+        }
+        if (opts.template && opts.fromCampaign) throw new Error('Use either --template or --from-campaign, not both');
+        const payload: Record<string, unknown> = {
+          name: opts.name,
+          columnMapping,
+          geocoding: geocodeColumns ? { enabled: true, columns: geocodeColumns } : undefined,
+          templateId: opts.template,
+          fromCampaignId: opts.fromCampaign ? parseId(opts.fromCampaign, '--from-campaign') : undefined,
+          steps: opts.steps ? readJsonArg(opts.steps, '--steps') : undefined,
+          maxLeads: opts.maxLeads !== undefined ? parseIntOption(opts.maxLeads, '--max-leads') : undefined,
+          region: opts.region,
+          description: opts.description,
+          start: opts.start ? true : undefined,
+        };
+        const data = await callMultipart(satvoltClient(global, 300000), '/campaigns/from-excel', file, payload);
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
