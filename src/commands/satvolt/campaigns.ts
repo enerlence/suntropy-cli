@@ -19,6 +19,56 @@ const CAMPAIGN_LIST_FIELDS =
   'idCampaign,name,state,source,totalLeads,maxLeads,leadsCompletionPercentage,creationTimestamp';
 
 /**
+ * --credit-limit <n> | --no-credit-limit | nothing.
+ *
+ * Commander turns the negated flag into `false`; leaving both out must send
+ * nothing at all, so the backend applies its default cap.
+ */
+function creditLimitFromOpts(opts: Record<string, unknown>): number | null | undefined {
+  if (opts.creditLimit === false) return null;
+  if (opts.creditLimit === undefined) return undefined;
+  const n = parseIntOption(String(opts.creditLimit), '--credit-limit');
+  if (!n) throw new Error('--credit-limit must be greater than 0 (use --no-credit-limit for no cap)');
+  return n;
+}
+
+/**
+ * Where the campaign stands against its cap. It goes to stderr, like the usage
+ * summary, because `credits` is a nested object and the human table would only
+ * dump it as JSON.
+ */
+function creditSummary(campaign: any, campaignId: number | string): string {
+  const credits = campaign?.credits;
+  if (!credits) return '';
+  const reserved = credits.reserved ? ` + ${credits.reserved} reserved` : '';
+  const cap = credits.limit
+    ? ` of ${credits.limit} · ${credits.remaining} left`
+    : ' · no credit limit';
+  let line = chalk.bold(`Credits: ${credits.spent ?? 0} spent${reserved}${cap}\n`);
+  if (campaign?.pauseReason === 'credit_limit') {
+    line += chalk.yellow(
+      'Paused on its own after reaching that limit. Raise it with ' +
+        `\`campaigns credit-limit ${campaignId} <credits>\` and then \`campaigns unpause ${campaignId}\`.\n`,
+    );
+  }
+  return `${line}\n`;
+}
+
+/**
+ * The credit cap 409 says what to do about it, not just that it happened: it
+ * is the one error the caller fixes with another command.
+ */
+function creditLimitError(err: unknown, campaignId: number | string) {
+  const mapped = satvoltError(err);
+  if (mapped.code === 'CREDIT_LIMIT_REACHED') {
+    mapped.message =
+      `${mapped.message} Raise it with: suntropy satvolt campaigns credit-limit ${campaignId} <credits> ` +
+      '(or --off --yes to remove the cap).';
+  }
+  return mapped;
+}
+
+/**
  * Builds the `area` payload from the mutually exclusive area flags.
  * Polygons accept [[lat,lng],...], [{lat,lng},...] or GeoJSON (Polygon geometry
  * or Feature), whose coordinates are [lng,lat].
@@ -59,7 +109,10 @@ function buildArea(opts: Record<string, string | undefined>) {
 export function registerSatvoltCampaignCommands(satvolt: Command): void {
   const campaigns = satvolt
     .command('campaigns')
-    .description('Satvolt campaigns: list, create from an area, start, pause, cancel, reset, resume, usage, logs and funnel.');
+    .description(
+      'Satvolt campaigns: list, create from an area, start, pause, cancel, reset, resume, ' +
+        'credit-limit, usage, logs and funnel.',
+    );
 
   // --- list ---
   campaigns
@@ -94,11 +147,16 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
   // --- get ---
   campaigns
     .command('get <campaignId>')
-    .description('Campaign detail: area, lead counts by state and pipeline configuration.')
+    .description(
+      'Campaign detail: area, lead counts by state, credits against the campaign cap\n' +
+        'and pipeline configuration.',
+    )
     .action(async (campaignId) => {
       const global = getGlobalOpts(campaigns);
       try {
-        const data = await call(satvoltClient(global), 'get', `/campaigns/${parseId(campaignId, 'campaignId')}`);
+        const id = parseId(campaignId, 'campaignId');
+        const data = await call(satvoltClient(global), 'get', `/campaigns/${id}`);
+        if (global.format === 'human') process.stderr.write(creditSummary(data, id));
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
@@ -112,7 +170,9 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .description(
       'Create a Maps campaign over an area. It stays queued unless --start is passed\n' +
         '(same as the web app). Steps are the LEAD steps only: SECTORIZE, FIND_LEADS\n' +
-        'and COMPLETE are added by the backend, and missing dependencies are added too.\n\n' +
+        'and COMPLETE are added by the backend, and missing dependencies are added too.\n' +
+        'The campaign is capped at 100000 credits and pauses itself instead of\n' +
+        'spending more: --credit-limit <n> sets another cap, --no-credit-limit removes it.\n\n' +
         'Area (exactly one):\n' +
         '  --circle <lat,lng> --radius <meters>   stored as a circle (100 m - 50 km)\n' +
         '  --bounds <nwLat,nwLng,seLat,seLng>     rectangle\n' +
@@ -142,6 +202,8 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .option('--polygon <json>', 'Polygon points, GeoJSON, @file or - for stdin')
     .option('--search-query <text>', 'Use Places text search with this query instead of nearby search')
     .option('--max-leads <n>', 'Stop discovering leads after this many')
+    .option('--credit-limit <n>', 'Spend ceiling in credits (default: 100000)')
+    .option('--no-credit-limit', 'No spend ceiling: the campaign can spend without limit')
     .option('--business-groups <ids>', 'Comma-separated group ids (default: businesses). See: satvolt catalog business-groups')
     .option('--steps <json>', 'LEAD steps as JSON array, @file or -. See: satvolt catalog actions')
     .option('--address <text>', 'Reference address shown in the web app')
@@ -164,6 +226,8 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         if (opts.description !== undefined) body.description = opts.description;
         if (opts.searchQuery) body.searchQuery = opts.searchQuery;
         if (opts.maxLeads !== undefined) body.maxLeads = parseIntOption(opts.maxLeads, '--max-leads');
+        const creditLimit = creditLimitFromOpts(opts);
+        if (creditLimit !== undefined) body.creditLimit = creditLimit;
         if (opts.businessGroups) body.businessGroups = opts.businessGroups.split(',').map((s: string) => s.trim()).filter(Boolean);
         if (opts.steps) body.steps = readJsonArg(opts.steps, '--steps');
         if (opts.address) body.inputAddress = opts.address;
@@ -329,6 +393,8 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .option('--from-campaign <id>', 'Copy the pipeline of another campaign')
     .option('--steps <json>', 'LEAD steps as JSON array, @file or -')
     .option('--max-leads <n>', 'Import only the first n rows')
+    .option('--credit-limit <n>', 'Spend ceiling in credits (default: 100000)')
+    .option('--no-credit-limit', 'No spend ceiling: the campaign can spend without limit')
     .option('--region <text>', 'Region of the leads (also biases the geocoding)')
     .option('--description <text>', 'Natural language description of the configuration')
     .option('--start', 'Start the pipeline right after creating it (spends credits)')
@@ -361,6 +427,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
           fromCampaignId: opts.fromCampaign ? parseId(opts.fromCampaign, '--from-campaign') : undefined,
           steps: opts.steps ? readJsonArg(opts.steps, '--steps') : undefined,
           maxLeads: opts.maxLeads !== undefined ? parseIntOption(opts.maxLeads, '--max-leads') : undefined,
+          creditLimit: creditLimitFromOpts(opts),
           region: opts.region,
           description: opts.description,
           start: opts.start ? true : undefined,
@@ -394,17 +461,66 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
       }
     });
 
+  // --- credit-limit ---
+  campaigns
+    .command('credit-limit <campaignId> [credits]')
+    .summary('Set or remove the spend ceiling of a campaign, in credits.')
+    .description(
+      'Every new campaign is capped at 100000 credits. When the cap is reached the\n' +
+        'campaign pauses itself instead of spending more (`campaigns get` shows pauseReason:\n' +
+        'credit_limit), and unpause, extend and `leads run-step` answer 409\n' +
+        'CREDIT_LIMIT_REACHED until the cap is raised or removed.\n\n' +
+        'What counts against the cap is the credits already charged plus the ones reserved\n' +
+        'by async steps still waiting for their webhook (`campaigns get` → credits).\n' +
+        'It is a soft ceiling: steps already running when it is reached finish and are\n' +
+        'charged, so the final figure can land slightly above it.\n' +
+        'Raising the cap does NOT resume the campaign: run `campaigns unpause` afterwards.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt campaigns credit-limit 8 150000\n' +
+        '  suntropy satvolt campaigns credit-limit 8 --off --yes',
+    )
+    .option('--off', 'Remove the cap: the campaign can spend without limit')
+    .option('--yes', 'Confirm removing the cap (required with --off)')
+    .action(async (campaignId, credits, opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        const id = parseId(campaignId, 'campaignId');
+        let creditLimit: number | null;
+        if (opts.off) {
+          if (credits !== undefined) throw new Error('Pass either the new limit in credits or --off, not both.');
+          if (!opts.yes) {
+            throw new Error('Without a cap the campaign can spend without limit. Re-run with --yes to confirm.');
+          }
+          creditLimit = null;
+        } else {
+          if (credits === undefined) throw new Error('Pass the new limit in credits, or --off --yes to remove the cap.');
+          const parsed = parseIntOption(credits, 'credits');
+          if (!parsed) throw new Error('credits must be greater than 0 (use --off --yes to remove the cap)');
+          creditLimit = parsed;
+        }
+        const data = await call(satvoltClient(global), 'put', `/campaigns/${id}/credit-limit`, {
+          data: { creditLimit },
+        });
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
   // --- start ---
   campaigns
     .command('start <campaignId>')
-    .description('Start the pipeline of a queued campaign (spends credits).')
+    .description(
+      'Start the pipeline of a queued campaign (spends credits, up to its credit cap:\n' +
+        'see `campaigns credit-limit`).',
+    )
     .action(async (campaignId) => {
       const global = getGlobalOpts(campaigns);
       try {
         const data = await call(satvoltClient(global), 'post', `/campaigns/${parseId(campaignId, 'campaignId')}/start`);
         output(data, global);
       } catch (err) {
-        outputError(satvoltError(err));
+        outputError(creditLimitError(err, campaignId));
       }
     });
 
@@ -440,6 +556,8 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         'its next pending step queued, and steps already executed are neither re-run\n' +
         'nor charged again. Only a paused campaign can be unpaused. This is not\n' +
         '`resume`, which appends a NEW step to a finished campaign.\n' +
+        'A campaign that reached its credit cap answers 409 CREDIT_LIMIT_REACHED: raise\n' +
+        'the cap with `campaigns credit-limit` before unpausing it.\n' +
         'Example:\n' +
         '  suntropy satvolt campaigns unpause 72',
     )
@@ -449,7 +567,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         const data = await call(satvoltClient(global, 120000), 'post', `/campaigns/${parseId(campaignId, 'campaignId')}/unpause`);
         output(data, global);
       } catch (err) {
-        outputError(satvoltError(err));
+        outputError(creditLimitError(err, campaignId));
       }
     });
 
@@ -535,7 +653,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         });
         output(data, global);
       } catch (err) {
-        outputError(satvoltError(err));
+        outputError(creditLimitError(err, campaignId));
       }
     });
 
