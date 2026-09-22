@@ -135,7 +135,8 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
     .description(
       'Run one pipeline step on a single lead, through the same queue as the pipeline.\n' +
         'Step: uid, action if it appears once, step name or fullData key (e.g. cif).\n' +
-        'Spends the credits of that step (a failed or skipped run is free).\n' +
+        'Spends the credits of that step (a failed or skipped run is free). A campaign\n' +
+        'that reached its credit cap answers 409 CREDIT_LIMIT_REACHED.\n' +
         '  default       only that step: later steps are not queued and a completed or\n' +
         '                unqualified lead keeps its state (except when re-running QUALIFY)\n' +
         '  --continue    continue the pipeline from that step (later steps run again)\n' +
@@ -157,7 +158,12 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
         );
         output(data, global);
       } catch (err) {
-        outputError(satvoltError(err));
+        const mapped = satvoltError(err);
+        if (mapped.code === 'CREDIT_LIMIT_REACHED') {
+          mapped.message =
+            `${mapped.message} Raise it with: suntropy satvolt campaigns credit-limit ${campaignId} <credits>.`;
+        }
+        outputError(mapped);
       }
     });
 
