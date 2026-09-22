@@ -18,14 +18,6 @@ const TERMINAL_CAMPAIGN_STATES = new Set(['completed', 'failed', 'canceled']);
 const CAMPAIGN_LIST_FIELDS =
   'idCampaign,name,state,source,totalLeads,maxLeads,leadsCompletionPercentage,creationTimestamp';
 
-/** A credit is worth 0.005 €, so the default cap of 100000 credits is 500 €. */
-const EUR_PER_CREDIT = 0.005;
-
-function eur(credits: number): string {
-  const value = credits * EUR_PER_CREDIT;
-  return `${value.toFixed(2).replace(/\.00$/, '')} €`;
-}
-
 /**
  * --credit-limit <n> | --no-credit-limit | nothing.
  *
@@ -50,7 +42,7 @@ function creditSummary(campaign: any, campaignId: number | string): string {
   if (!credits) return '';
   const reserved = credits.reserved ? ` + ${credits.reserved} reserved` : '';
   const cap = credits.limit
-    ? ` of ${credits.limit} (${eur(credits.limit)}) · ${credits.remaining} left`
+    ? ` of ${credits.limit} · ${credits.remaining} left`
     : ' · no credit limit';
   let line = chalk.bold(`Credits: ${credits.spent ?? 0} spent${reserved}${cap}\n`);
   if (campaign?.pauseReason === 'credit_limit') {
@@ -179,7 +171,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
       'Create a Maps campaign over an area. It stays queued unless --start is passed\n' +
         '(same as the web app). Steps are the LEAD steps only: SECTORIZE, FIND_LEADS\n' +
         'and COMPLETE are added by the backend, and missing dependencies are added too.\n' +
-        'The campaign is capped at 100000 credits (500 €) and pauses itself instead of\n' +
+        'The campaign is capped at 100000 credits and pauses itself instead of\n' +
         'spending more: --credit-limit <n> sets another cap, --no-credit-limit removes it.\n\n' +
         'Area (exactly one):\n' +
         '  --circle <lat,lng> --radius <meters>   stored as a circle (100 m - 50 km)\n' +
@@ -210,7 +202,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .option('--polygon <json>', 'Polygon points, GeoJSON, @file or - for stdin')
     .option('--search-query <text>', 'Use Places text search with this query instead of nearby search')
     .option('--max-leads <n>', 'Stop discovering leads after this many')
-    .option('--credit-limit <n>', 'Spend ceiling in credits (default: 100000, i.e. 500 €)')
+    .option('--credit-limit <n>', 'Spend ceiling in credits (default: 100000)')
     .option('--no-credit-limit', 'No spend ceiling: the campaign can spend without limit')
     .option('--business-groups <ids>', 'Comma-separated group ids (default: businesses). See: satvolt catalog business-groups')
     .option('--steps <json>', 'LEAD steps as JSON array, @file or -. See: satvolt catalog actions')
@@ -401,7 +393,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .option('--from-campaign <id>', 'Copy the pipeline of another campaign')
     .option('--steps <json>', 'LEAD steps as JSON array, @file or -')
     .option('--max-leads <n>', 'Import only the first n rows')
-    .option('--credit-limit <n>', 'Spend ceiling in credits (default: 100000, i.e. 500 €)')
+    .option('--credit-limit <n>', 'Spend ceiling in credits (default: 100000)')
     .option('--no-credit-limit', 'No spend ceiling: the campaign can spend without limit')
     .option('--region <text>', 'Region of the leads (also biases the geocoding)')
     .option('--description <text>', 'Natural language description of the configuration')
@@ -474,7 +466,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .command('credit-limit <campaignId> [credits]')
     .summary('Set or remove the spend ceiling of a campaign, in credits.')
     .description(
-      'Every new campaign is capped at 100000 credits (500 €). When the cap is reached the\n' +
+      'Every new campaign is capped at 100000 credits. When the cap is reached the\n' +
         'campaign pauses itself instead of spending more (`campaigns get` shows pauseReason:\n' +
         'credit_limit), and unpause, extend and `leads run-step` answer 409\n' +
         'CREDIT_LIMIT_REACHED until the cap is raised or removed.\n\n' +
