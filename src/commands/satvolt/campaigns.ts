@@ -77,7 +77,7 @@ function creditLimitError(err: unknown, campaignId: number | string) {
  * `key=value` pairs → limits patch. `off` (or `null`) removes that goal.
  * Keys are validated by the backend (see `satvolt catalog campaign-limits`).
  */
-function parseLimitPairs(pairs: string[] | undefined): Record<string, number | null> {
+export function parseLimitPairs(pairs: string[] | undefined): Record<string, number | null> {
   const out: Record<string, number | null> = {};
   for (const pair of pairs ?? []) {
     const match = /^([A-Za-z0-9_]+)=(.+)$/.exec(pair.trim());
@@ -96,7 +96,7 @@ function parseLimitPairs(pairs: string[] | undefined): Record<string, number | n
   return out;
 }
 
-const collect = (value: string, previous: string[] = []) => [...previous, value];
+export const collect = (value: string, previous: string[] = []) => [...previous, value];
 
 /**
  * How the campaign advances and where it stands against its goals. Goes to
