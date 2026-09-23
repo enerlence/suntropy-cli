@@ -79,6 +79,7 @@ export function registerSatvoltCommands(program: Command): void {
     ['ai-agents', '/catalog/ai-agents', 'AI agents allowed in AI_AGENT config.agentId: id, name and description. Every agent costs the AI_AGENT credits.'],
     ['business-groups', '/catalog/business-groups', 'Business category groups for --business-groups.'],
     ['states', '/catalog/states', 'Campaign and lead states.'],
+    ['campaign-limits', '/catalog/campaign-limits', 'Goals a campaign can stop at (campaigns create --limit, campaigns limits): key, unit, description.'],
   ];
   for (const [name, path, description] of catalogEntries) {
     catalog

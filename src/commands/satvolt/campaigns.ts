@@ -56,7 +56,8 @@ function creditSummary(campaign: any, campaignId: number | string): string {
 
 /**
  * The credit cap 409 says what to do about it, not just that it happened: it
- * is the one error the caller fixes with another command.
+ * is the one error the caller fixes with another command. Same for a goal
+ * (`limits`) the campaign already reached.
  */
 function creditLimitError(err: unknown, campaignId: number | string) {
   const mapped = satvoltError(err);
@@ -65,7 +66,72 @@ function creditLimitError(err: unknown, campaignId: number | string) {
       `${mapped.message} Raise it with: suntropy satvolt campaigns credit-limit ${campaignId} <credits> ` +
       '(or --off --yes to remove the cap).';
   }
+  if (mapped.code === 'LIMIT_REACHED') {
+    mapped.message =
+      `${mapped.message} Raise or remove it with: suntropy satvolt campaigns limits ${campaignId} <key>=<value>|<key>=off.`;
+  }
   return mapped;
+}
+
+/**
+ * `key=value` pairs → limits patch. `off` (or `null`) removes that goal.
+ * Keys are validated by the backend (see `satvolt catalog campaign-limits`).
+ */
+function parseLimitPairs(pairs: string[] | undefined): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const pair of pairs ?? []) {
+    const match = /^([A-Za-z0-9_]+)=(.+)$/.exec(pair.trim());
+    if (!match) throw new Error(`Invalid limit "${pair}": use key=value, e.g. completedLeads=200 or annualKwh=off`);
+    const [, key, raw] = match;
+    if (raw === 'off' || raw === 'null') {
+      out[key] = null;
+      continue;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error(`Invalid value for ${key}: "${raw}" (a positive number, or off)`);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+const collect = (value: string, previous: string[] = []) => [...previous, value];
+
+/**
+ * How the campaign advances and where it stands against its goals. Goes to
+ * stderr next to the credit summary, for the same reason.
+ */
+function deliverySummary(campaign: any, campaignId: number | string): string {
+  let out = '';
+  const progress = campaign?.sectorProgress;
+  if (campaign?.executionMode === 'sectors' && progress) {
+    const done = progress.settled + progress.skipped;
+    out += chalk.bold(
+      `Sector delivery: ${done} of ${progress.total} sectors done · ${progress.inFlight} in progress · ` +
+        `${progress.waiting} waiting (${campaign.sectorsInFlight} at a time)\n`,
+    );
+    if (progress.waiting > 0) {
+      out += chalk.dim(
+        `Switch to a full sweep with \`campaigns full-sweep ${campaignId} --yes\` to search them all now.\n`,
+      );
+    }
+  } else if (campaign?.executionMode === 'full') {
+    out += chalk.bold('Full sweep: every sector searched at once\n');
+  }
+  const goals = (campaign?.limits ?? []).filter((l: any) => l.key !== 'credits');
+  for (const goal of goals) {
+    const pct = goal.value ? Math.min(100, Math.round((goal.current / goal.value) * 100)) : 0;
+    const line = `Goal ${goal.key}: ${Math.round(goal.current)} of ${goal.value} ${goal.unit} (${pct}%)`;
+    out += goal.reached ? chalk.green(`${line} · reached\n`) : `${line}\n`;
+  }
+  if (campaign?.pauseReason === 'limit_reached') {
+    out += chalk.yellow(
+      'Paused on its own after reaching a goal. Raise it with ' +
+        `\`campaigns limits ${campaignId} <key>=<value>\` and then \`campaigns unpause ${campaignId}\`.\n`,
+    );
+  }
+  return out ? `${out}\n` : '';
 }
 
 /**
@@ -156,7 +222,10 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
       try {
         const id = parseId(campaignId, 'campaignId');
         const data = await call(satvoltClient(global), 'get', `/campaigns/${id}`);
-        if (global.format === 'human') process.stderr.write(creditSummary(data, id));
+        if (global.format === 'human') {
+          process.stderr.write(creditSummary(data, id));
+          process.stderr.write(deliverySummary(data, id));
+        }
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
@@ -173,6 +242,17 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         'and COMPLETE are added by the backend, and missing dependencies are added too.\n' +
         'The campaign is capped at 100000 credits and pauses itself instead of\n' +
         'spending more: --credit-limit <n> sets another cap, --no-credit-limit removes it.\n\n' +
+        'Execution mode:\n' +
+        '  sectors (default)  search a sector, finish its leads, then the next one, from the\n' +
+        '                     centre of the area outwards (--sectors-in-flight at a time, 2 by\n' +
+        '                     default). Stopping it at any point leaves finished leads.\n' +
+        '  full               search every sector at once and put all leads in flight together\n' +
+        '                     (to study the whole area fast). `campaigns full-sweep` switches a\n' +
+        '                     sectors campaign to full at any time.\n\n' +
+        'Goals (--limit key=value, repeatable): stop when the campaign has delivered that\n' +
+        'much, counting completed leads only. Keys: completedLeads, annualKwh, roofAreaM2\n' +
+        '(see: satvolt catalog campaign-limits).\n' +
+        '  --limit completedLeads=200 --limit annualKwh=50000000\n\n' +
         'Area (exactly one):\n' +
         '  --circle <lat,lng> --radius <meters>   stored as a circle (100 m - 50 km)\n' +
         '  --bounds <nwLat,nwLng,seLat,seLng>     rectangle\n' +
@@ -204,6 +284,9 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .option('--max-leads <n>', 'Stop discovering leads after this many')
     .option('--credit-limit <n>', 'Spend ceiling in credits (default: 100000)')
     .option('--no-credit-limit', 'No spend ceiling: the campaign can spend without limit')
+    .option('--execution-mode <mode>', 'sectors (default: sector by sector) or full (every sector at once)')
+    .option('--sectors-in-flight <n>', 'Sectors mode only: sectors in progress at a time (1-20, default 2)')
+    .option('--limit <key=value>', 'Goal: stop when reached (repeatable). See: satvolt catalog campaign-limits', collect)
     .option('--business-groups <ids>', 'Comma-separated group ids (default: businesses). See: satvolt catalog business-groups')
     .option('--steps <json>', 'LEAD steps as JSON array, @file or -. See: satvolt catalog actions')
     .option('--address <text>', 'Reference address shown in the web app')
@@ -228,6 +311,20 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         if (opts.maxLeads !== undefined) body.maxLeads = parseIntOption(opts.maxLeads, '--max-leads');
         const creditLimit = creditLimitFromOpts(opts);
         if (creditLimit !== undefined) body.creditLimit = creditLimit;
+        if (opts.executionMode !== undefined) {
+          if (!['sectors', 'full'].includes(opts.executionMode)) {
+            throw new Error('--execution-mode must be sectors or full');
+          }
+          body.executionMode = opts.executionMode;
+        }
+        if (opts.sectorsInFlight !== undefined) {
+          body.sectorsInFlight = parseIntOption(opts.sectorsInFlight, '--sectors-in-flight');
+        }
+        if (opts.limit?.length) {
+          const limits = parseLimitPairs(opts.limit);
+          if (Object.values(limits).some((v) => v === null)) throw new Error('--limit key=off only makes sense in `campaigns limits`');
+          body.limits = { ...((body.limits as object) ?? {}), ...limits };
+        }
         if (opts.businessGroups) body.businessGroups = opts.businessGroups.split(',').map((s: string) => s.trim()).filter(Boolean);
         if (opts.steps) body.steps = readJsonArg(opts.steps, '--steps');
         if (opts.address) body.inputAddress = opts.address;
@@ -504,6 +601,77 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
+      }
+    });
+
+  // --- limits ---
+  campaigns
+    .command('limits <campaignId> [pairs...]')
+    .summary('Set or remove the goals of a campaign (completed leads, consumption, roof surface).')
+    .description(
+      'Goals stop a campaign once it has DELIVERED that much, counting completed leads only\n' +
+        '(a discarded, failed or half-processed lead does not add up):\n' +
+        '  completedLeads   leads that went through the whole pipeline\n' +
+        '  annualKwh        estimated annual consumption (a shared parcel counts once)\n' +
+        '  roofAreaM2       roof surface, once per catastral parcel\n' +
+        'In sectors mode, reaching one stops admitting sectors: the sectors in progress finish\n' +
+        'and the campaign completes by itself. In a full sweep the campaign pauses\n' +
+        '(`campaigns get` → pauseReason: limit_reached).\n' +
+        'Pairs patch the current goals; key=off removes one. With no pairs, shows them.\n' +
+        'Raising a goal does NOT resume the campaign: run `campaigns unpause` afterwards.\n' +
+        'Examples:\n' +
+        '  suntropy satvolt campaigns limits 91 completedLeads=200 annualKwh=50000000\n' +
+        '  suntropy satvolt campaigns limits 91 annualKwh=off\n' +
+        '  suntropy satvolt campaigns limits 91',
+    )
+    .action(async (campaignId, pairs) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        const id = parseId(campaignId, 'campaignId');
+        if (!pairs?.length) {
+          const data = await call(satvoltClient(global), 'get', `/campaigns/${id}`);
+          output({ campaignId: id, limits: data?.limits ?? [] }, global);
+          return;
+        }
+        const data = await call(satvoltClient(global), 'patch', `/campaigns/${id}/limits`, {
+          data: parseLimitPairs(pairs),
+        });
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  // --- full-sweep ---
+  campaigns
+    .command('full-sweep <campaignId>')
+    .summary('Switch a sector-by-sector campaign to a full sweep: search every waiting sector now (--yes).')
+    .description(
+      'A campaign in sectors mode searches a sector, finishes its leads and moves on. A full\n' +
+        'sweep searches every sector that is still waiting right now, and all their leads go\n' +
+        'through the pipeline at once: faster to cover the whole area, but the search of\n' +
+        'every remaining sector is paid now and stopping it later leaves many leads half done.\n' +
+        'Irreversible for this campaign. A paused campaign keeps the sectors queued until\n' +
+        '`campaigns unpause`.\n' +
+        '`campaigns get` shows how many sectors are waiting (sectorProgress.waiting).\n' +
+        'Example:\n' +
+        '  suntropy satvolt campaigns full-sweep 91 --yes',
+    )
+    .option('--yes', 'Confirm the switch (required)')
+    .action(async (campaignId, opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        const id = parseId(campaignId, 'campaignId');
+        if (!opts.yes) {
+          throw new Error(
+            'A full sweep searches every waiting sector now and cannot be undone. Check ' +
+              `\`campaigns get ${id}\` (sectorProgress.waiting) and re-run with --yes to confirm.`,
+          );
+        }
+        const data = await call(satvoltClient(global, 120000), 'post', `/campaigns/${id}/full-sweep`);
+        output(data, global);
+      } catch (err) {
+        outputError(creditLimitError(err, campaignId));
       }
     });
 
