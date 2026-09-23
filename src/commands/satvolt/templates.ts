@@ -9,8 +9,30 @@ import {
   satvoltClient,
   satvoltError,
 } from './api.js';
+import { collect, parseLimitPairs } from './campaigns.js';
 
-const TEMPLATE_LIST_FIELDS = 'id,name,description,steps,businessGroups,searchQuery,maxLeads,sourceCampaignId';
+/** --execution-mode, --sectors-in-flight and --limit, shared by create and patch. */
+function deliveryFields(opts: Record<string, any>, body: Record<string, unknown>): void {
+  if (opts.executionMode !== undefined) {
+    if (!['sectors', 'full'].includes(opts.executionMode)) throw new Error('--execution-mode must be sectors or full');
+    body.executionMode = opts.executionMode;
+  }
+  if (opts.sectorsInFlight !== undefined) {
+    body.sectorsInFlight = parseIntOption(opts.sectorsInFlight, '--sectors-in-flight');
+  }
+  if (opts.leadBatchSize !== undefined) {
+    body.leadBatchSize = parseIntOption(opts.leadBatchSize, '--lead-batch-size');
+  }
+  if (opts.limit?.length) {
+    const limits = parseLimitPairs(opts.limit);
+    if (Object.values(limits).some((v) => v === null)) throw new Error('Use --no-limits to remove the goals of a template');
+    body.limits = limits;
+  }
+  if (opts.limits === false) body.limits = null;
+}
+
+const TEMPLATE_LIST_FIELDS =
+  'id,name,description,steps,businessGroups,searchQuery,maxLeads,executionMode,limits,sourceCampaignId';
 
 const splitList = (value: string) => value.split(',').map((s) => s.trim()).filter(Boolean);
 const templatePath = (idOrName: string) => `/campaign-templates/${encodeURIComponent(idOrName)}`;
@@ -88,6 +110,10 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
     .option('--configuration-description <text>', 'Natural language description copied to campaigns')
     .option('--search-query <text>', 'Places text search query')
     .option('--max-leads <n>', 'Default lead limit of campaigns created from it')
+    .option('--execution-mode <mode>', 'sectors or full for campaigns created from it (default: sectors)')
+    .option('--sectors-in-flight <n>', 'Sectors mode: sectors in progress at a time (1-20)')
+    .option('--lead-batch-size <n>', 'Sectors mode: leads of a sector in the pipeline at a time (1-500)')
+    .option('--limit <key=value>', 'Goal for campaigns created from it (repeatable). See: satvolt catalog campaign-limits', collect)
     .option('--data <json>', 'Full request body (JSON, @file or -); flags override its fields')
     .action(async (opts) => {
       const global = getGlobalOpts(templates);
@@ -101,6 +127,7 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
         if (opts.configurationDescription !== undefined) body.configurationDescription = opts.configurationDescription;
         if (opts.searchQuery) body.searchQuery = opts.searchQuery;
         if (opts.maxLeads !== undefined) body.maxLeads = parseIntOption(opts.maxLeads, '--max-leads');
+        deliveryFields(opts, body);
         if (!body.name) throw new Error('--name is required');
         if (body.fromCampaignId === undefined && body.steps === undefined) {
           throw new Error('Pass --from-campaign <id> or --steps <json>');
@@ -151,6 +178,11 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
     .option('--search-query <text>', 'Places text search query (empty string removes it)')
     .option('--max-leads <n>', 'Default lead limit')
     .option('--no-max-leads', 'Remove the default lead limit')
+    .option('--execution-mode <mode>', 'sectors or full for campaigns created from it')
+    .option('--sectors-in-flight <n>', 'Sectors mode: sectors in progress at a time (1-20)')
+    .option('--lead-batch-size <n>', 'Sectors mode: leads of a sector in the pipeline at a time (1-500)')
+    .option('--limit <key=value>', 'Goals (repeatable); replaces all the goals of the template', collect)
+    .option('--no-limits', 'Remove the goals of the template')
     .option('--data <json>', 'Patch body (JSON, @file or -); flags override its fields')
     .action(async (idOrName, opts) => {
       const global = getGlobalOpts(templates);
@@ -165,6 +197,7 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
         // commander: --max-leads <n> sets a string, --no-max-leads sets false.
         if (opts.maxLeads === false) body.maxLeads = null;
         else if (opts.maxLeads !== undefined && opts.maxLeads !== true) body.maxLeads = parseIntOption(opts.maxLeads, '--max-leads');
+        deliveryFields(opts, body);
         if (Object.keys(body).length === 0) throw new Error('Nothing to change: pass at least one option');
         output(await call(satvoltClient(global), 'patch', templatePath(idOrName), { data: body }), global);
       } catch (err) {
