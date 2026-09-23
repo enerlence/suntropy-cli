@@ -111,6 +111,11 @@ function deliverySummary(campaign: any, campaignId: number | string): string {
       `Sector delivery: ${done} of ${progress.total} sectors done · ${progress.inFlight} in progress · ` +
         `${progress.waiting} waiting (${campaign.sectorsInFlight} at a time)\n`,
     );
+    if (progress.leadsWaiting > 0) {
+      out += chalk.dim(
+        `${progress.leadsWaiting} leads found are waiting for their batch (${campaign.leadBatchSize} per batch)\n`,
+      );
+    }
     if (progress.waiting > 0) {
       out += chalk.dim(
         `Switch to a full sweep with \`campaigns full-sweep ${campaignId} --yes\` to search them all now.\n`,
@@ -245,7 +250,10 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         'Execution mode:\n' +
         '  sectors (default)  search a sector, finish its leads, then the next one, from the\n' +
         '                     centre of the area outwards (--sectors-in-flight at a time, 2 by\n' +
-        '                     default). Stopping it at any point leaves finished leads.\n' +
+        '                     default). Inside a sector, leads go through the pipeline in\n' +
+        '                     batches (--lead-batch-size, 25 by default): the next batch\n' +
+        '                     starts when the previous one is done. Stopping it at any point\n' +
+        '                     leaves finished leads.\n' +
         '  full               search every sector at once and put all leads in flight together\n' +
         '                     (to study the whole area fast). `campaigns full-sweep` switches a\n' +
         '                     sectors campaign to full at any time.\n\n' +
@@ -286,6 +294,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .option('--no-credit-limit', 'No spend ceiling: the campaign can spend without limit')
     .option('--execution-mode <mode>', 'sectors (default: sector by sector) or full (every sector at once)')
     .option('--sectors-in-flight <n>', 'Sectors mode only: sectors in progress at a time (1-20, default 2)')
+    .option('--lead-batch-size <n>', 'Sectors mode only: leads of a sector in the pipeline at a time (1-500, default 25)')
     .option('--limit <key=value>', 'Goal: stop when reached (repeatable). See: satvolt catalog campaign-limits', collect)
     .option('--business-groups <ids>', 'Comma-separated group ids (default: businesses). See: satvolt catalog business-groups')
     .option('--steps <json>', 'LEAD steps as JSON array, @file or -. See: satvolt catalog actions')
@@ -319,6 +328,9 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         }
         if (opts.sectorsInFlight !== undefined) {
           body.sectorsInFlight = parseIntOption(opts.sectorsInFlight, '--sectors-in-flight');
+        }
+        if (opts.leadBatchSize !== undefined) {
+          body.leadBatchSize = parseIntOption(opts.leadBatchSize, '--lead-batch-size');
         }
         if (opts.limit?.length) {
           const limits = parseLimitPairs(opts.limit);

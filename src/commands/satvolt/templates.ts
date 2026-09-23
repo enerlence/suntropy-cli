@@ -20,6 +20,9 @@ function deliveryFields(opts: Record<string, any>, body: Record<string, unknown>
   if (opts.sectorsInFlight !== undefined) {
     body.sectorsInFlight = parseIntOption(opts.sectorsInFlight, '--sectors-in-flight');
   }
+  if (opts.leadBatchSize !== undefined) {
+    body.leadBatchSize = parseIntOption(opts.leadBatchSize, '--lead-batch-size');
+  }
   if (opts.limit?.length) {
     const limits = parseLimitPairs(opts.limit);
     if (Object.values(limits).some((v) => v === null)) throw new Error('Use --no-limits to remove the goals of a template');
@@ -109,6 +112,7 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
     .option('--max-leads <n>', 'Default lead limit of campaigns created from it')
     .option('--execution-mode <mode>', 'sectors or full for campaigns created from it (default: sectors)')
     .option('--sectors-in-flight <n>', 'Sectors mode: sectors in progress at a time (1-20)')
+    .option('--lead-batch-size <n>', 'Sectors mode: leads of a sector in the pipeline at a time (1-500)')
     .option('--limit <key=value>', 'Goal for campaigns created from it (repeatable). See: satvolt catalog campaign-limits', collect)
     .option('--data <json>', 'Full request body (JSON, @file or -); flags override its fields')
     .action(async (opts) => {
@@ -176,6 +180,7 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
     .option('--no-max-leads', 'Remove the default lead limit')
     .option('--execution-mode <mode>', 'sectors or full for campaigns created from it')
     .option('--sectors-in-flight <n>', 'Sectors mode: sectors in progress at a time (1-20)')
+    .option('--lead-batch-size <n>', 'Sectors mode: leads of a sector in the pipeline at a time (1-500)')
     .option('--limit <key=value>', 'Goals (repeatable); replaces all the goals of the template', collect)
     .option('--no-limits', 'Remove the goals of the template')
     .option('--data <json>', 'Patch body (JSON, @file or -); flags override its fields')
