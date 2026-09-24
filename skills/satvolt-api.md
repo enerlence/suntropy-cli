@@ -28,7 +28,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$API/campaigns?state=completed&limit=
 | Método | Ruta | Devuelve |
 |---|---|---|
 | GET | `/catalog/actions` | Acciones LEAD visibles: `action`, `name`, `description`, `multiple`, `isAsync`, `creditCost` (fijo por lead; las ejecuciones fallidas o saltadas no cobran), `finalLeadState`, `dependencies`, `resultsPropertyKeys` (solo claves de primer nivel), `configSchema` (JSON Schema de la configuración de entrada). Las rutas de los datos que escribe cada paso salen de `/campaigns/:id/fields` |
-| GET | `/catalog/ai-agents` | Agentes válidos para `AI_AGENT.config.agentId` |
+| GET | `/catalog/ai-agents` | Agentes válidos para `AI_AGENT.config.agentId`, con `creditCost` por ejecución |
 | GET | `/catalog/business-groups` | Grupos para `businessGroups` |
 | GET | `/catalog/states` | Estados de campaña y de lead |
 
