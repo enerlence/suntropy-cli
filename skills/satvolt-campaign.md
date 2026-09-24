@@ -22,7 +22,7 @@ Cada acción del pipeline gasta créditos por lead (1 crédito = 0,005 €). Ant
 ```bash
 suntropy satvolt catalog actions            # acciones, créditos por lead, dependencias y JSON Schema de config
 suntropy satvolt catalog business-groups
-suntropy satvolt catalog ai-agents          # ids válidos para AI_AGENT config.agentId
+suntropy satvolt catalog ai-agents          # ids válidos para AI_AGENT config.agentId y sus créditos
 ```
 
 Reglas del catálogo:
@@ -164,7 +164,7 @@ suntropy satvolt config update <campaignId> --data @pipeline.json
 Para añadir una acción a una campaña terminada sin reprocesarla, usa `resume`. Añade el paso al final y lo lanza sobre los leads que llegaron al paso anterior:
 
 ```bash
-suntropy satvolt catalog ai-agents --format human     # id, nombre y descripción de cada agente
+suntropy satvolt catalog ai-agents --format human     # id, nombre, descripción y créditos de cada agente
 suntropy satvolt campaigns funnel <campaignId>         # leads que llegaron al último paso: los que pagarán el nuevo
 suntropy satvolt campaigns resume <campaignId> --action AI_AGENT \
   --config '{"customName":"Web corporativa","agentId":"<id>","outputKey":"web"}'

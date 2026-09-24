@@ -38,7 +38,8 @@ El token es un JWT con `clientUID`. Todo queda acotado a la empresa del token. C
   - `catalog actions` da de cada acción los créditos por lead, las dependencias, si admite repetirse (`multiple`) y el JSON Schema de su `config`.
   - Los valores `default` se rellenan solos. Las dependencias que falten se añaden y se avisa en `warnings`.
 - **Créditos:** 1 crédito = 0,005 €.
-  - Cada acción cobra un precio fijo por lead (`creditCost` en `catalog actions` o `steps list`). Todos los agentes de AI_AGENT cuestan lo mismo.
+  - Cada acción cobra un precio fijo por lead (`creditCost` en `catalog actions` o `steps list`).
+  - AI_AGENT cobra según el agente: cada uno trae su `creditCost` en `catalog ai-agents`, y `steps list` muestra el del agente configurado. El `creditCost` de AI_AGENT en `catalog actions` es el de un agente sin precio propio.
   - Las ejecuciones fallidas o saltadas (`skipped`) no cobran.
   - `estimatedCreditsPerLead` al crear es el máximo, como si todos los leads pasaran todos los pasos; los filtros (QUALIFY) lo reducen. El consumo real por lead lo da `campaigns usage` (`avgCreditsPerLead`); para estimar una campaña nueva, usa el de una campaña anterior con la misma configuración.
 - **Estados:** consulta `catalog states`.
@@ -51,7 +52,7 @@ El token es un JWT con `clientUID`. Todo queda acotado a la empresa del token. C
 | Comando | Devuelve |
 |---|---|
 | `catalog actions` | Acciones LEAD: `creditCost`, `isAsync`, `multiple`, `dependencies`, `resultsPropertyKeys`, `configSchema` |
-| `catalog ai-agents` | Agentes válidos para `AI_AGENT.config.agentId` |
+| `catalog ai-agents` | Agentes válidos para `AI_AGENT.config.agentId`, con sus créditos por ejecución (`creditCost`) |
 | `catalog business-groups` | Grupos de negocio para `--business-groups` (`businesses` = solo negocios) |
 | `catalog states` | Estados de campaña y de lead |
 

@@ -39,7 +39,7 @@ Revisa la base antes de usarla (`templates get "<nombre>"`). Estos son los fallo
 | `ESTIMATE_CONSUMPTION` va **después** del paso que obtiene el CNAE y lo referencia en `cnaeTemplate` (p. ej. `{{fullData.cif.response.extras.cnae}}` del agente "Buscador de CIF") | Sin CNAE la confianza no pasa de "media" y el consumo de los fabricantes sale muy por debajo (mediana ×1,77 al añadirlo) |
 | `businessGroups` no vacío (p. ej. `businesses`) | Con `[]` entran cementerios, iglesias, gasolineras…; QUALIFY los descarta, pero cada uno ya ha pagado FIND_ROOFTOP, consumo y QUALIFY |
 | `qualificationDefinition` de QUALIFY acotada al objetivo | Si incluye "restaurantes, hoteles…", en los cascos urbanos cualifican bares sin CIF ni LinkedIn que después pasan por los agentes caros |
-| Los agentes caros (55 créditos) van detrás de QUALIFY con `filterUnqualifiedLeads: true` | Así solo los pagan los leads cualificados |
+| Los agentes (AI_AGENT, de 20 a 40 créditos cada uno según `catalog ai-agents`, frente a 7 de QUALIFY) van detrás de QUALIFY con `filterUnqualifiedLeads: true` | Así solo los pagan los leads cualificados |
 
 Para corregir la plantilla: `templates patch "<nombre>" --steps '[{"uid":"<uid>","config":{...}}]'`, o `--business-groups businesses`.
 
