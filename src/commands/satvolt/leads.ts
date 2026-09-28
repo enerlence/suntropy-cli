@@ -26,7 +26,7 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
         '  --state <a,b>          lead states (see: satvolt catalog states)\n' +
         '  --step <step>          pipeline step: uid, ACTION (if it appears once), step name\n' +
         '                         ("Buscador de CIF") or fullData key (cif)\n' +
-        '  --step-status <s>      reached (default) | success | failure | skipped | processing | pending\n\n' +
+        '  --step-status <s>      reached (default) | success | unsatisfied | failure | skipped | processing | pending\n\n' +
         'Examples:\n' +
         '  suntropy satvolt leads list 59 --name "logistica" --limit 25\n' +
         '  suntropy satvolt leads list 59 --step QUALIFY --step-status failure\n' +

@@ -28,7 +28,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$API/campaigns?state=completed&limit=
 | Método | Ruta | Devuelve |
 |---|---|---|
 | GET | `/catalog/actions` | Acciones LEAD visibles: `action`, `name`, `description`, `multiple`, `isAsync`, `creditCost` (fijo por lead; las ejecuciones fallidas o saltadas no cobran), `finalLeadState`, `dependencies`, `resultsPropertyKeys` (solo claves de primer nivel), `configSchema` (JSON Schema de la configuración de entrada). Las rutas de los datos que escribe cada paso salen de `/campaigns/:id/fields` |
-| GET | `/catalog/ai-agents` | Agentes válidos para `AI_AGENT.config.agentId`, con `creditCost` por ejecución |
+| GET | `/catalog/ai-agents` | Agentes válidos para `AI_AGENT.config.agentId`, con `creditCost` por ejecución y `unsatisfiedCreditCost` (tarifa si termina sin su dato; `null` si siempre cobra completo) |
 | GET | `/catalog/business-groups` | Grupos para `businessGroups` |
 | GET | `/catalog/states` | Estados de campaña y de lead |
 
@@ -46,7 +46,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$API/campaigns?state=completed&limit=
 | POST | `/campaigns/:id/resume` | `{ "step": { "action": "AI_AGENT", "config": {...} } }`: lo añade al final y lo ejecuta sobre los leads |
 | GET | `/campaigns/:id/usage` | `?include=leads`: créditos totales, por paso y, opcionalmente, por lead |
 | GET | `/campaigns/:id/logs` | `?limit&sinceTs&level=debug\|log\|warn\|error` → `{ entries, lastTs }` |
-| GET | `/campaigns/:id/funnel` | Por paso LEAD: `reached`, `success`, `failure`, `skipped`, `processing` y `pending`, más `leadStates`. `criteria` (o `null`) añade `met`/`unmet` según el `successIf` del paso |
+| GET | `/campaigns/:id/funnel` | Por paso LEAD: `reached`, `success`, `unsatisfied`, `failure`, `skipped`, `processing` y `pending`, más `leadStates`. `criteria` (o `null`) añade `met`/`unmet` según el `successIf` del paso |
 
 ### Criterio de éxito y reintentos por paso
 
@@ -140,8 +140,8 @@ La `action` de un paso existente no se puede cambiar. Si la campaña está en ma
 
 | Método | Ruta | Parámetros |
 |---|---|---|
-| GET | `/campaigns/:id/leads` | `?limit&offset&name&search&state=a,b&step=<paso>&stepStatus=reached\|success\|failure\|skipped\|processing\|pending&include=steps` |
-| GET | `/campaigns/:id/leads/:leadId` | `?fullData=true` (todo) o `?fullData=clave1,clave2` |
+| GET | `/campaigns/:id/leads` | `?limit&offset&name&search&state=a,b&step=<paso>&stepStatus=reached\|success\|unsatisfied\|failure\|skipped\|processing\|pending&include=steps` |
+| GET | `/campaigns/:id/leads/:leadId` | `?fullData=true` (todo) o `?fullData=clave1,clave2`. Cada paso de `steps` trae `status`, `creditCost` y, si terminó `unsatisfied`, `charge: { fullCreditCost, creditCost, missing, reason }` |
 | POST | `/campaigns/:id/leads/:leadId/steps/:step/run` | `{ "mode": "only" \| "continue", "force": false }` → 202 |
 | GET | `/campaigns/:id/fields` | `?sample=25` (máx. 100) `&step=<paso>`: campos para columnas de exportación, agrupados por paso (ver *Tablas de exportación*) |
 

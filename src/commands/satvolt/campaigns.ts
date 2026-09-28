@@ -905,7 +905,8 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .summary('Leads per pipeline step, by execution or by success criteria')
     .description(
       'Funnel of the campaign: for each LEAD step, how many leads reached it and how many\n' +
-        'succeeded, failed, were skipped, are processing (async) or still pending, plus\n' +
+        'succeeded, finished without their result (unsatisfied: reduced charge), failed,\n' +
+        'were skipped, are processing (async) or still pending, plus\n' +
         'the lead counts by state.\n' +
         '\n' +
         '--mode success shows how many leads the step actually brought data for, which is\n' +
@@ -947,6 +948,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
                     reached: s.reached,
                     pctOfTotal: s.reachedPct,
                     success: s.success,
+                    unsatisfied: s.unsatisfied ?? 0,
                     failure: s.failure,
                     skipped: s.skipped,
                     processing: s.processing,
