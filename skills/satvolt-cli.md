@@ -41,6 +41,7 @@ El token es un JWT con `clientUID`. Todo queda acotado a la empresa del token. C
   - Cada acción cobra un precio fijo por lead (`creditCost` en `catalog actions` o `steps list`).
   - AI_AGENT cobra según el agente: cada uno trae su `creditCost` en `catalog ai-agents`, y `steps list` muestra el del agente configurado. El `creditCost` de AI_AGENT en `catalog actions` es el de un agente sin precio propio.
   - Las ejecuciones fallidas o saltadas (`skipped`) no cobran.
+  - Un agente que termina sin el dato que se paga (sin URL de LinkedIn, sin CIF, sin decisor) queda como `unsatisfied` («completado sin resultado») y cobra su tarifa reducida (`unsatisfiedCreditCost` en `catalog ai-agents`; hoy 30→5, 20→5 y 40→10). El lead sigue el pipeline, y el paso cuenta como resuelto. Qué dato decide el éxito lo fija el servidor por agente, no el `successIf` del paso.
   - `estimatedCreditsPerLead` al crear es el máximo, como si todos los leads pasaran todos los pasos; los filtros (QUALIFY) lo reducen. El consumo real por lead lo da `campaigns usage` (`avgCreditsPerLead`); para estimar una campaña nueva, usa el de una campaña anterior con la misma configuración.
 - **Estados:** consulta `catalog states`.
   - Campaña: `queued` → `inProgress` → `completed`, `failed`, `paused` o `canceled`.
@@ -52,7 +53,7 @@ El token es un JWT con `clientUID`. Todo queda acotado a la empresa del token. C
 | Comando | Devuelve |
 |---|---|
 | `catalog actions` | Acciones LEAD: `creditCost`, `isAsync`, `multiple`, `dependencies`, `resultsPropertyKeys`, `configSchema` |
-| `catalog ai-agents` | Agentes válidos para `AI_AGENT.config.agentId`, con sus créditos por ejecución (`creditCost`) |
+| `catalog ai-agents` | Agentes válidos para `AI_AGENT.config.agentId`, con sus créditos por ejecución (`creditCost`) y los de una ejecución sin resultado (`unsatisfiedCreditCost`, `null` si no tiene) |
 | `catalog business-groups` | Grupos de negocio para `--business-groups` (`businesses` = solo negocios) |
 | `catalog states` | Estados de campaña y de lead |
 
@@ -81,8 +82,8 @@ Una plantilla guarda todo lo que define una campaña salvo el nombre y el área:
 | `campaigns create --name N <área> [base] [opciones]` | Crea una campaña de Maps en cola (`--start` la arranca) |
 | `campaigns start <id>` | Arranca una campaña `queued` (gasta créditos) |
 | `campaigns logs <id> [--level error] [--since ts] [--follow]` | Logs de procesamiento (30 días, 5.000 entradas); `--follow` termina solo |
-| `campaigns funnel <id>` | Por paso (`steps[]` con `uid`, `action`, `name`, `reached`, `success`, `failure`, `skipped`, `processing`, `pending`), más `leadStates` |
-| `campaigns usage <id> [--by-lead]` | Créditos cobrados (regla de la pestaña Usage) |
+| `campaigns funnel <id>` | Por paso (`steps[]` con `uid`, `action`, `name`, `reached`, `success`, `unsatisfied`, `failure`, `skipped`, `processing`, `pending`), más `leadStates` |
+| `campaigns usage <id> [--by-lead]` | Créditos cobrados, re-ejecuciones incluidas (igual que `credits.spent`); por paso, `reruns` y `unsatisfied` |
 | `campaigns extend <id> --max-leads N \| --no-limit` | Más leads sin relanzar: solo busca en los sectores pendientes |
 | `campaigns resume <id> --action A [--config json]` | Añade un paso al final y lo ejecuta sobre los leads existentes |
 | `campaigns reset <id> --yes [--start]` | Borra leads y resultados y vuelve a `queued` (se vuelve a pagar todo) |
@@ -132,7 +133,7 @@ Si la campaña está en marcha, cambiar el orden o quitar pasos devuelve un avis
 | `leads run-step <id> <leadId> <uid\|ACCIÓN> [--continue] [--force]` | Ejecuta un paso en un lead |
 | `leads fields <id> [--sample n] [--step uid\|ACCIÓN] [--search t]` | Campos para columnas de exportación por paso (igual que `export-tables fields`) |
 
-`--step-status` admite `reached` (por defecto), `success`, `failure`, `skipped`, `processing` o `pending`.
+`--step-status` admite `reached` (por defecto), `success`, `unsatisfied`, `failure`, `skipped`, `processing` o `pending`.
 
 **`run-step`:**
 - Pasa por la misma cola que el pipeline y cobra los créditos del paso.

@@ -113,7 +113,7 @@ suntropy satvolt leads get <campaignId> <leadId> --full-data consumptionEstimate
 suntropy satvolt leads full-data <campaignId> <leadId> --path cif.response.extras.cnae
 ```
 
-`--step-status`: `reached` (por defecto), `success`, `failure`, `skipped`, `processing` o `pending`.
+`--step-status`: `reached` (por defecto), `success`, `unsatisfied` (el agente terminó sin su dato y cobró la tarifa reducida), `failure`, `skipped`, `processing` o `pending`.
 
 ### Paso 5: Tabla de exportación
 
@@ -170,7 +170,7 @@ suntropy satvolt campaigns resume <campaignId> --action AI_AGENT \
   --config '{"customName":"Web corporativa","agentId":"<id>","outputKey":"web"}'
 ```
 
-`--config` es solo el objeto de configuración del paso (el `configSchema` de `catalog actions`), no `{ action, config }`. Coste ≈ leads que llegaron al último paso × `creditCost` de la acción.
+`--config` es solo el objeto de configuración del paso (el `configSchema` de `catalog actions`), no `{ action, config }`. Coste ≈ leads que llegaron al último paso × `creditCost` de la acción (en AI_AGENT, el del agente; los leads en que no encuentre su dato pagan `unsatisfiedCreditCost`).
 
 Si el `agentId` sale de una variable de shell, no lo metas entre comillas simples (no se expande); usa un fichero:
 
