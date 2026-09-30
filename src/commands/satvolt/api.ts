@@ -27,7 +27,7 @@ export function getGlobalOpts(cmd: Command): GlobalOpts {
  * TODO: drop this once Satvolt is deployed to production — `getServiceUrl`
  * already resolves `<server>/satvolt` on its own.
  */
-export const SATVOLT_DEV_BASE_URL = 'https://api-dev.suntropy.domain.eu.axebow.cloud/satvolt';
+export const SATVOLT_DEV_BASE_URL = 'https://api-dev.enerlence.com/satvolt';
 
 /**
  * Two escape hatches so the hardcoded host does not get in the way:
