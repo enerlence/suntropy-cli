@@ -277,6 +277,9 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         'search query and lead limit come from it; any flag you pass wins.\n' +
         '  --template <id|name>     a campaign template (see: satvolt templates list)\n' +
         '  --from-campaign <id>     copy the pipeline of another Maps campaign\n' +
+        'The export tables come along too: those of the template\'s source campaign, or of\n' +
+        'the --from-campaign one, are copied into the new campaign (`exportTables` in the\n' +
+        'response). A template saved without a source campaign brings none (see `warnings`).\n' +
         '  suntropy satvolt campaigns create --name "Sonda Huévar" --template "Greenvolt industria" \\\n' +
         '    --circle 37.3509,-6.2757 --radius 5000 --max-leads 50',
     )

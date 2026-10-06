@@ -169,6 +169,7 @@ Si la campaña está en marcha, cambiar el orden o quitar pasos devuelve un avis
 - **Tipo por defecto:** sin `:tipo` o `--type`, la columna toma el tipo de la columna del lead o el que declara el paso para esa ruta (`annualKwh` → `number`); si no, `string`.
 - **`warnings`:** crear o editar columnas avisa con `UNKNOWN_FULLDATA_KEY` si ningún paso de la campaña escribe esa clave de `fullData` (errata, alias cambiado). La columna se guarda igualmente.
 - **Tablas entre campañas:** las campañas de una misma plantilla comparten uids, así que una tabla con `fullData.qualification_<uid>` se puede duplicar entre ellas.
+- **Al crear desde una base, las tablas se copian solas.** `campaigns create --template` copia a la nueva campaña las tablas de la campaña de origen de la plantilla, y `--from-campaign` las de esa campaña. Vienen en `exportTables` de la respuesta. Si la plantilla no tiene campaña de origen o esa campaña no tenía tablas, `exportTables` sale vacío y `warnings` lo dice: entonces créala con `export-tables create`. Si pasas `--steps`, revisa las columnas de `fullData.<clave>_<uid>`, que apuntan a los pasos de la base.
 
 ## Códigos de error frecuentes
 
