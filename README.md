@@ -258,6 +258,34 @@ The response is the study with `economicResults.ppaAnalysis` populated
 (`simulationResults[].profitabilityResults` → `irr`, `paybackYears`). Heavy
 PowerCurve objects are summarized unless `--raw` is passed.
 
+### `suntropy projects` - Alexandria Projects
+
+Alexandria projects group conversations under shared instructions (agent.md style)
+and documents. A project is `private` (only its owner) or `client` (everyone in the
+account). Another user's private project looks like it does not exist (404).
+
+```bash
+suntropy projects list
+suntropy projects get <id>                          # instructions + files
+suntropy projects create --name "Casa García" --instructions-file ./agent.md --visibility client
+suntropy projects update <id> --instructions "Responde siempre con kWh"
+suntropy projects delete <id>
+
+# Documents (add takes a link already in the document store: https, *.enerlence.com)
+suntropy projects files list <id>
+suntropy projects files add <id> --name factura.pdf --url https://documents.enerlence.com/f/<token>/?dl=1
+suntropy projects files remove <id> <fileId>
+
+# Pull the files into a local folder (e.g. the sandbox) to read them
+suntropy projects files download <id> --all --out ./project-files
+suntropy projects files download <id> --file <fileId>
+```
+
+Only the owner or an account admin can change a project or its files. `download`
+never overwrites: a name already in the folder gets ` (2)`, ` (3)`… and file names
+are stripped of any path. Note that an API key acts as its own user (`api-key:<n>`),
+so it sees the shared projects and the private ones created with that same key.
+
 ### `suntropy shareables` - Shareable Links
 
 Create shareable links for studies (sharing service, exposed under `/templates`).
