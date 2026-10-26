@@ -6,6 +6,7 @@ import { registerStudiesCommands } from './commands/studies/index.js';
 import { registerCurvesCommands } from './commands/curves/index.js';
 import { registerConsumptionCommands } from './commands/consumption/index.js';
 import { registerSolarformCommands } from './commands/solarform/index.js';
+import { registerProjectsCommands } from './commands/projects/index.js';
 import { registerPPACommands } from './commands/ppa/index.js';
 import { registerShareableCommands } from './commands/shareables/index.js';
 import { registerTemplatesCommands } from './commands/templates/index.js';
@@ -43,6 +44,7 @@ export function createProgram(): Command {
   registerCurvesCommands(program);
   registerConsumptionCommands(program);
   registerSolarformCommands(program);
+  registerProjectsCommands(program);
   registerPPACommands(program);
   registerShareableCommands(program);
   registerTemplatesCommands(program);
