@@ -312,7 +312,7 @@ Quick solar study creation via the simplified Solar Form API.
 ```bash
 # Simple mode (auto-optimized)
 suntropy solarform simple \
-  --region "Andalucia" --sub-region "Sevilla" \
+  --region andalucia --sub-region sevilla \
   --consumption 5000 --pattern Domestic
 
 # Full control

@@ -95,12 +95,14 @@ export function registerSolarformCommands(program: Command): void {
       'Consumption mode: monthlyConsumption (kWh) or monthlySpending (EUR)\n' +
       'Excesses modes: PPA, gridSelling, noInjection, virtualBattery\n\n' +
       'Examples:\n' +
-      '  suntropy solarform simple --region "Andalucía" --sub-region "Sevilla" --consumption 5000\n' +
-      '  suntropy solarform simple --region "Cataluña" --sub-region "Barcelona" --consumption 300 --consumption-mode monthlySpending --save\n' +
-      '  suntropy solarform simple --region "Madrid" --sub-region "Madrid" --consumption 8000 --pattern Domestic --kit-id abc123 --save'
+      '  suntropy solarform simple --region andalucia --sub-region sevilla --consumption 5000\n' +
+      '  suntropy solarform simple --region cataluña --sub-region barcelona --consumption 300 --consumption-mode monthlySpending --save\n' +
+      '  suntropy solarform simple --region madrid --sub-region madrid --consumption 8000 --pattern Domestic --kit-id abc123 --save\n\n' +
+      'Region and sub-region are the `name` of the periods service (lowercase, e.g. andalucia/sevilla),\n' +
+      'not the label («Andalucía»): an unknown one is 422 REGION_NOT_FOUND / SUBREGION_NOT_FOUND.'
     )
-    .requiredOption('--region <name>', 'Region name (must exist in database)')
-    .requiredOption('--sub-region <name>', 'Sub-region name')
+    .requiredOption('--region <name>', 'Region name as stored in the database (e.g. andalucia)')
+    .requiredOption('--sub-region <name>', 'Sub-region name as stored in the database (e.g. sevilla)')
     .requiredOption('--consumption <value>', 'Consumption value (kWh or EUR depending on --consumption-mode)')
     .option('--pattern <name>', 'Consumption pattern: Balance, Nightly, Morning, Afternoon, Domestic, Commercial', 'Balance')
     .option('--consumption-mode <mode>', 'monthlyConsumption (kWh) or monthlySpending (EUR)', 'monthlyConsumption')
