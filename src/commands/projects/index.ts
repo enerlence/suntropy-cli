@@ -2,7 +2,9 @@ import { Command } from 'commander';
 import axios from 'axios';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
-import { createServiceClient, handleApiError, type ClientOptions } from '../../client.js';
+import { handleApiError, type ClientOptions } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { PROJECTS } from '../../api/ops/settings.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & ClientOptions {
@@ -11,7 +13,6 @@ function getGlobalOpts(cmd: Command): OutputOptions & ClientOptions {
   return root.opts() as any;
 }
 
-const BASE = '/api/alexandria-projects';
 
 /** Largest file the command will pull into the sandbox (the backend caps uploads at 25 MB). */
 const MAX_DOWNLOAD_BYTES = 30 * 1024 * 1024;
@@ -120,9 +121,7 @@ export function registerProjectsCommands(program: Command): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(projects);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(BASE);
-        output(res.data, global);
+        output(await invoke(PROJECTS.list, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -135,9 +134,7 @@ export function registerProjectsCommands(program: Command): void {
     .action(async (id: string) => {
       try {
         const global = getGlobalOpts(projects);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`${BASE}/${parseId(id, 'project id')}`);
-        output(res.data, global);
+        output(await invoke(PROJECTS.get, global, { id: parseId(id, 'project id') }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -160,9 +157,7 @@ export function registerProjectsCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(projects);
-        const client = createServiceClient('solar', global);
-        const res = await client.post(BASE, projectBody(opts));
-        output(res.data, global);
+        output(await invoke(PROJECTS.create, global, { body: projectBody(opts) }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -180,13 +175,11 @@ export function registerProjectsCommands(program: Command): void {
     .action(async (id: string, opts) => {
       try {
         const global = getGlobalOpts(projects);
-        const client = createServiceClient('solar', global);
         const body = projectBody(opts);
         if (Object.keys(body).length === 0) {
           throw new Error('Nothing to update. Pass at least one of --name, --description, --instructions, --instructions-file, --visibility.');
         }
-        const res = await client.put(`${BASE}/${parseId(id, 'project id')}`, body);
-        output(res.data, global);
+        output(await invoke(PROJECTS.update, global, { id: parseId(id, 'project id'), body }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -199,10 +192,7 @@ export function registerProjectsCommands(program: Command): void {
     .action(async (id: string) => {
       try {
         const global = getGlobalOpts(projects);
-        const client = createServiceClient('solar', global);
-        const projectId = parseId(id, 'project id');
-        await client.delete(`${BASE}/${projectId}`);
-        output({ deleted: true, id: projectId }, global);
+        output(await invoke(PROJECTS.delete, global, { id: parseId(id, 'project id') }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -217,9 +207,8 @@ export function registerProjectsCommands(program: Command): void {
     .action(async (projectId: string) => {
       try {
         const global = getGlobalOpts(projects);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`${BASE}/${parseId(projectId, 'project id')}`);
-        output(res.data.files ?? [], global);
+        const project = await invoke(PROJECTS.get, global, { id: parseId(projectId, 'project id') });
+        output(project?.files ?? [], global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -240,15 +229,13 @@ export function registerProjectsCommands(program: Command): void {
     .action(async (projectId: string, opts) => {
       try {
         const global = getGlobalOpts(projects);
-        const client = createServiceClient('solar', global);
         const body: Record<string, unknown> = { name: opts.name, url: opts.url };
         if (opts.size !== undefined) {
           if (!/^\d+$/.test(opts.size)) throw new Error(`Invalid --size "${opts.size}". Pass the size in bytes.`);
           body.size = Number(opts.size);
         }
         if (opts.mime !== undefined) body.mimeType = opts.mime;
-        const res = await client.post(`${BASE}/${parseId(projectId, 'project id')}/files`, body);
-        output(res.data, global);
+        output(await invoke(PROJECTS.addFile, global, { id: parseId(projectId, 'project id'), body }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -260,11 +247,9 @@ export function registerProjectsCommands(program: Command): void {
     .action(async (projectId: string, fileId: string) => {
       try {
         const global = getGlobalOpts(projects);
-        const client = createServiceClient('solar', global);
         const id = parseId(projectId, 'project id');
         const file = parseId(fileId, 'file id');
-        await client.delete(`${BASE}/${id}/files/${file}`);
-        output({ removed: true, projectId: id, fileId: file }, global);
+        output(await invoke(PROJECTS.removeFile, global, { id, fileId: file }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -291,9 +276,8 @@ export function registerProjectsCommands(program: Command): void {
         if (opts.all && opts.file !== undefined) {
           throw new Error('Use either --all or --file, not both.');
         }
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`${BASE}/${parseId(projectId, 'project id')}`);
-        const all: ProjectFile[] = res.data.files ?? [];
+        const project = await invoke(PROJECTS.get, global, { id: parseId(projectId, 'project id') });
+        const all: ProjectFile[] = project?.files ?? [];
 
         let selected = all;
         if (opts.file !== undefined) {

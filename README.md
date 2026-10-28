@@ -41,23 +41,43 @@ suntropy auth status
 > root command (e.g. `suntropy --profile dev auth status`). They apply to every
 > subcommand, including `auth`.
 
-### Two kinds of credential
+### Two kinds of credential, one command line
 
-| Credential | From | Goes to | Works with |
-|---|---|---|---|
-| **API v2 key** (`sun_…`) | `auth login --web`, `auth set-key sun_…`, or the API v2 panel in Configuration | the API gateway, `<gateway>/api/v2/…` | `satvolt …` (LeadGen and credits) and `auth status`, for now |
-| **JWT** (user session or legacy API key) | `auth login --email --password`, `auth set-key <jwt>` | the internal routes, `<server>/<service>/…` | every command |
+| Credential | From | Goes to |
+|---|---|---|
+| **API v2 key** (`sun_…`) | `auth login --web`, `auth set-key sun_…`, or the API v2 panel in Configuration | the API gateway, `<gateway>/api/v2/…` |
+| **JWT** (user session or legacy API key) | `auth login --email --password`, `auth set-key <jwt>` | the internal routes, `<server>/<service>/…` |
 
-API v2 keys are stored hashed by the gateway, carry scopes (by default
-`leadgen:read`, `leadgen:write`, `credits:read`) and are really revoked when you
-delete them in Configuration. Any other command run with a `sun_` key stops
-before calling the API with a clear message (code `V2_KEY_NOT_SUPPORTED`): it
-still needs `suntropy auth login`. The other way round, a command that only
-exists in the v2 stops with `V1_AUTH_NOT_SUPPORTED` when run with a user
-session or a legacy key. Each command declares the APIs it supports and the
-CLI picks one per request from the credential (`createApiClient` in
-`src/client.ts`). What is missing in the v2 for the rest of the
-CLI is listed in [`docs/v2-gaps.md`](docs/v2-gaps.md).
+Every command declares the route it uses in each API version, and the CLI
+picks one per request from the credential: a `sun_` key goes to the v2, a JWT
+or a legacy key to the v1. The JSON a command prints (`--format json`) is the
+same in both: the CLI unwraps `data`, turns the v2 pagination into the usual
+`{ data, total, limit, offset, hasMore }`, walks the pages where the v1 returns
+the whole collection, and prints deletes as `{ "success": true, "deleted": … }`.
+The only differences are the ones the contract allows: who appears as author
+of what a key creates (`api-key:gateway-<id>`), no password hash in shareables,
+no `client` record in the theme, no private projects of people with a key, and
+`--credit-amount` ignored with a key (the licence decides the credits).
+
+- Three commands stay on v1 and stop with `V2_KEY_NOT_SUPPORTED` when run with a
+  `sun_` key: `config solarform advanced init-default` (superadmin, acts on
+  another account) and `solarform statistics --create|--update` (anonymous
+  widget telemetry).
+- A v2 error is printed on stderr with the gateway's `code`, `message` and
+  `status` (e.g. `{"error":true,"code":"INSUFFICIENT_SCOPE",…}`); stdout stays
+  empty, as with v1.
+- `auth login --web` asks for the 17 scopes the CLI uses (studies, inventory,
+  calculations, documents, reference, settings, notifications, projects,
+  leadgen and `credits:read`); `--scopes a,b` asks for fewer.
+- `config theme get|edit`: `--client-uid` is optional (your account by
+  default). With a key it can only be the key's own account
+  (`CLIENT_UID_MISMATCH`).
+
+The route of every command in each version is in
+[`docs/v2-gaps.md`](docs/v2-gaps.md); the code lives in `src/api/` (`core.ts`
+picks the version, `translate.ts` holds the translations, `ops/*.ts` the
+routes). `npm run parity` compares both versions against a real backend
+([`scripts/parity/README.md`](scripts/parity/README.md)).
 
 - `auth status` shows `credential: "sun_"` or `"jwt"`; for a `sun_` key it asks
   the gateway (`GET /api/v2/me`) for its `label`, `scopes`, `clientUID` and
@@ -118,7 +138,7 @@ SUNTROPY_API_KEY=<jwt> suntropy studies list
 
 > ⚠️ The value must be a **JWT** or an **API v2 key** (`sun_…`), i.e. what you'd
 > pass to `auth set-key --key`; the CLI sends it as `Authorization: Bearer <token>`.
-> With a `sun_` key only `satvolt` works for now (see "Two kinds of credential").
+> Every command works with both; see "Two kinds of credential".
 
 ## Global Options
 
@@ -292,7 +312,7 @@ Quick solar study creation via the simplified Solar Form API.
 ```bash
 # Simple mode (auto-optimized)
 suntropy solarform simple \
-  --region "Andalucia" --sub-region "Sevilla" \
+  --region andalucia --sub-region sevilla \
   --consumption 5000 --pattern Domestic
 
 # Full control

@@ -1,12 +1,9 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
-import { output, outputError, type OutputOptions } from '../../output.js';
-
-function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
-  let root = cmd;
-  while (root.parent) root = root.parent;
-  return root.opts() as any;
-}
+import { handleApiError } from '../../client.js';
+import { output, outputError } from '../../output.js';
+import { invoke } from '../../api/core.js';
+import { CUSTOM_FIELDS } from '../../api/ops/inventory.js';
+import { getGlobalOpts } from './factory.js';
 
 function parseData(data: string | undefined): Record<string, unknown> | undefined {
   if (!data) return undefined;
@@ -27,9 +24,7 @@ export function registerCustomFieldsCommands(inventory: Command): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(fields);
-        const client = createServiceClient('solar', global);
-        const res = await client.get('/custom-asset/custom-field/all');
-        output(res.data, global);
+        output(await invoke(CUSTOM_FIELDS.list, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -42,9 +37,7 @@ export function registerCustomFieldsCommands(inventory: Command): void {
     .action(async (id) => {
       try {
         const global = getGlobalOpts(fields);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`/custom-asset/custom-field/id/${id}`);
-        output(res.data, global);
+        output(await invoke(CUSTOM_FIELDS.get, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -65,10 +58,7 @@ export function registerCustomFieldsCommands(inventory: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(fields);
-        const client = createServiceClient('solar', global);
-        const body = parseData(opts.data);
-        const res = await client.post('/custom-asset/custom-field', body);
-        output(res.data, global);
+        output(await invoke(CUSTOM_FIELDS.create, global, { body: parseData(opts.data) }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -82,10 +72,7 @@ export function registerCustomFieldsCommands(inventory: Command): void {
     .action(async (id, opts) => {
       try {
         const global = getGlobalOpts(fields);
-        const client = createServiceClient('solar', global);
-        const body = parseData(opts.data);
-        const res = await client.put(`/custom-asset/custom-field/${id}`, body);
-        output(res.data, global);
+        output(await invoke(CUSTOM_FIELDS.update, global, { id, body: parseData(opts.data) }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -98,9 +85,7 @@ export function registerCustomFieldsCommands(inventory: Command): void {
     .action(async (id) => {
       try {
         const global = getGlobalOpts(fields);
-        const client = createServiceClient('solar', global);
-        const res = await client.delete(`/custom-asset/custom-field/${id}`);
-        output(res.data ?? { success: true, deleted: id }, global);
+        output(await invoke(CUSTOM_FIELDS.delete, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }

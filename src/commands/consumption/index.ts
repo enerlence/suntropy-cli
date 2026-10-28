@@ -1,6 +1,7 @@
 import { Command } from 'commander';
-import { readFileSync } from 'fs';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { REFERENCE } from '../../api/ops/reference.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
@@ -42,39 +43,20 @@ export function registerConsumptionCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(consumption);
-        const client = createServiceClient('profiles', global);
-
         const year = new Date().getFullYear();
-        const startDate = opts.startDate || `${year}-01-01`;
-        const endDate = opts.endDate || `${year}-12-31`;
-
-        // Build query params
-        const params: Record<string, string> = {
-          startDate,
-          endDate,
+        const curve = await invoke(REFERENCE.estimate, global, {
+          startDate: opts.startDate || `${year}-01-01`,
+          endDate: opts.endDate || `${year}-12-31`,
           tariff: opts.tariff,
           type: opts.type,
-          anualConsumption: opts.annual,
+          annualConsumption: opts.annual,
           market: opts.market,
-        };
-
-        if (opts.pattern) params.consumptionType = opts.pattern;
-        if (opts.customProfileId) params.customProfileId = opts.customProfileId;
-
-        // Build optional body
-        let body: Record<string, unknown> | undefined;
-        if (opts.monthlyData || opts.dailyCurve) {
-          body = {};
-          if (opts.monthlyData) body.consumptionByMonth = JSON.parse(opts.monthlyData);
-          if (opts.dailyCurve) body.dailyCurve = JSON.parse(opts.dailyCurve);
-        }
-
-        const queryString = Object.entries(params)
-          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
-          .join('&');
-
-        const res = await client.post(`/consumption-estimation?${queryString}`, body || {});
-        output(res.data, { ...global, save: opts.save || global.save });
+          consumptionType: opts.pattern,
+          customProfileId: opts.customProfileId,
+          consumptionByMonth: opts.monthlyData ? JSON.parse(opts.monthlyData) : undefined,
+          dailyCurve: opts.dailyCurve ? JSON.parse(opts.dailyCurve) : undefined,
+        });
+        output(curve, { ...global, save: opts.save || global.save });
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -97,17 +79,14 @@ export function registerConsumptionCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(consumption);
-        const client = createServiceClient('profiles', global);
-        const res = await client.get('/ree-profiles', {
-          params: {
-            startDate: opts.start,
-            endDate: opts.end,
-            tariff: opts.tariff,
-            type: opts.type,
-            market: opts.market,
-          },
+        const profiles = await invoke(REFERENCE.reeProfiles, global, {
+          startDate: opts.start,
+          endDate: opts.end,
+          tariff: opts.tariff,
+          type: opts.type,
+          market: opts.market,
         });
-        output(res.data, { ...global, save: opts.save || global.save });
+        output(profiles, { ...global, save: opts.save || global.save });
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -120,9 +99,7 @@ export function registerConsumptionCommands(program: Command): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(consumption);
-        const client = createServiceClient('profiles', global);
-        const res = await client.get('/custom-profiles/getTags');
-        output(res.data, global);
+        output(await invoke(REFERENCE.customTags, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -136,11 +113,7 @@ export function registerConsumptionCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(consumption);
-        const client = createServiceClient('profiles', global);
-        const res = await client.get('/custom-profiles/getInfo', {
-          params: { id: opts.id },
-        });
-        output(res.data, global);
+        output(await invoke(REFERENCE.customProfileInfo, global, { id: opts.id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -168,18 +141,15 @@ export function registerConsumptionCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(consumption);
-        const client = createServiceClient('periods', global);
         const year = new Date().getFullYear();
-        const res = await client.get('/periodos', {
-          params: {
-            idTarifa: parseInt(opts.tariffId),
-            idZona: parseInt(opts.zoneId),
-            fechaInicio: opts.start || `${year}-01-01`,
-            fechaFin: opts.end || `${year}-12-31`,
-            market: opts.market,
-          },
+        const periods = await invoke(REFERENCE.periods, global, {
+          tariffId: parseInt(opts.tariffId),
+          zoneId: parseInt(opts.zoneId),
+          startDate: opts.start || `${year}-01-01`,
+          endDate: opts.end || `${year}-12-31`,
+          market: opts.market,
         });
-        output(res.data, { ...global, save: opts.save || global.save });
+        output(periods, { ...global, save: opts.save || global.save });
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -198,19 +168,9 @@ export function registerConsumptionCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(consumption);
-        const client = createServiceClient('profiles', global);
-
         if (opts.eredesZip) {
-          const FormData = (await import('form-data')).default;
-          const form = new FormData();
-          form.append('file', readFileSync(opts.eredesZip), {
-            filename: opts.eredesZip.split('/').pop(),
-            contentType: 'application/zip',
-          });
-          const res = await client.post('/consumption-files-processor/portugal/eredes-zip', form, {
-            headers: form.getHeaders(),
-          });
-          output(res.data, { ...global, save: opts.save || global.save });
+          const curve = await invoke(REFERENCE.eredesZip, global, { file: opts.eredesZip });
+          output(curve, { ...global, save: opts.save || global.save });
         } else {
           outputError(new Error('Specify a file format: --eredes-zip <path>'));
         }

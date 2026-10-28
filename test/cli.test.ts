@@ -199,14 +199,14 @@ test('satvolt v2 errors keep the code and say what to do', async () => {
   }
 });
 
-test('a non-satvolt command with a sun_ key fails before calling, with a clear message', async () => {
+test('a v1-only command (§4 exclusions) with a sun_ key fails before calling, with a clear message', async () => {
   const srv = await fakeServer(() => ({ body: {} }));
   try {
-    const r = await runCli(['--server', `${srv.url}/`, 'templates', 'list'], { HOME: tempHome(profileWith('sun_k')) });
+    const r = await runCli(['--server', `${srv.url}/`, 'solarform', 'statistics', '--create'], { HOME: tempHome(profileWith('sun_k')) });
     assert.equal(r.code, 1);
     const err = JSON.parse(r.stderr.trim());
     assert.equal(err.code, 'V2_KEY_NOT_SUPPORTED');
-    assert.match(err.message, /still needs `suntropy auth login`/);
+    assert.match(err.message, /needs `suntropy auth login`/);
     assert.equal(srv.requests.length, 0);
   } finally {
     await srv.close();
@@ -268,5 +268,27 @@ test('credits with a JWT: satvolt /credits and payments credit-packs on the prof
     assert.equal(srv.requests[0].headers.authorization, 'Bearer eyJ.jwt.x');
   } finally {
     await srv.close();
+  }
+});
+
+test('auth login --web asks for the 17 CLI scopes by default; --scopes asks for fewer', async () => {
+  const { DEFAULT_WEB_SCOPES } = await import('../src/device-flow.js');
+  assert.equal(DEFAULT_WEB_SCOPES.length, 17);
+  for (const s of ['settings:read', 'settings:write', 'notifications:write', 'projects:read', 'projects:write', 'calculations:read']) {
+    assert.ok(DEFAULT_WEB_SCOPES.includes(s), s);
+  }
+  assert.ok(!DEFAULT_WEB_SCOPES.some((s) => s.startsWith('lidar:') || s === 'analytics:read'));
+  for (const [extra, expected] of [
+    [[], [...DEFAULT_WEB_SCOPES]],
+    [['--scopes', 'studies:read'], ['studies:read']],
+  ] as const) {
+    const gw = await deviceGateway([{ status: 200, body: APPROVED }]);
+    try {
+      const r = await runCli(['auth', 'login', '--web', ...extra], { HOME: tempHome(profileWith('eyJ.a.b')), SUNTROPY_GATEWAY_URL: gw.url });
+      assert.equal(r.code, 0, r.stderr);
+      assert.deepEqual(gw.requests[0].body.scopes, expected);
+    } finally {
+      await gw.close();
+    }
   }
 });

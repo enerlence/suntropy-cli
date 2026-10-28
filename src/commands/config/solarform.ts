@@ -1,5 +1,7 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { SOLARFORM_CONFIG } from '../../api/ops/settings.js';
 import { output, outputError } from '../../output.js';
 import { getGlobalOpts, buildPayload, editJson, pickKeys } from './shared.js';
 import { registerAdvancedCommands } from './advanced.js';
@@ -61,11 +63,7 @@ export function registerSolarformConfigCommands(configRoot: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(solarform);
-        const client = createServiceClient('solar', global);
-        const params: Record<string, string> = {};
-        if (opts.withParameters) params.getParameters = 'true';
-        const res = await client.get('/solar-form/get-solar-form-config', { params });
-        output(res.data, global);
+        output(await invoke(SOLARFORM_CONFIG.get, global, { withParameters: Boolean(opts.withParameters) }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -95,7 +93,6 @@ export function registerSolarformConfigCommands(configRoot: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(solarform);
-        const client = createServiceClient('solar', global);
 
         const flagValues: Record<string, unknown> = {
           solarFormUrl: opts.url,
@@ -111,10 +108,7 @@ export function registerSolarformConfigCommands(configRoot: Command): void {
         };
         const payload = buildPayload(flagValues, opts.set, opts.fromFile, SOLARFORM_KEYS);
 
-        const params: Record<string, string> = {};
-        if (opts.withParameters) params.getParameters = 'true';
-        const res = await client.post('/solar-form/solar-form-config', payload, { params });
-        output(res.data, global);
+        output(await invoke(SOLARFORM_CONFIG.create, global, { payload, withParameters: Boolean(opts.withParameters) }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -132,7 +126,6 @@ export function registerSolarformConfigCommands(configRoot: Command): void {
     .action(async (idSolarFormConfig, opts) => {
       try {
         const global = getGlobalOpts(solarform);
-        const client = createServiceClient('solar', global);
 
         const flagValues: Record<string, unknown> = {
           formTitle: opts.formTitle,
@@ -146,8 +139,7 @@ export function registerSolarformConfigCommands(configRoot: Command): void {
           return;
         }
 
-        const res = await client.put(`/solar-form/solar-form-config/${idSolarFormConfig}`, payload);
-        output(res.data, global);
+        output(await invoke(SOLARFORM_CONFIG.update, global, { id: idSolarFormConfig, payload }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -159,9 +151,7 @@ export function registerSolarformConfigCommands(configRoot: Command): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(solarform);
-        const client = createServiceClient('solar', global);
-        const current = await client.get('/solar-form/get-solar-form-config');
-        const doc = current.data as Record<string, unknown>;
+        const doc = (await invoke(SOLARFORM_CONFIG.get, global, {})) as Record<string, unknown>;
         const id = doc?.idSolarFormConfig;
         if (!id) {
           outputError(new Error('No existing SolarFormConfig found to edit. Use "create" first.'));
@@ -169,8 +159,7 @@ export function registerSolarformConfigCommands(configRoot: Command): void {
         }
         const subset = pickKeys(doc, SOLARFORM_KEYS);
         const edited = editJson(subset, 'solarform');
-        const res = await client.put(`/solar-form/solar-form-config/${id}`, edited);
-        output(res.data, global);
+        output(await invoke(SOLARFORM_CONFIG.update, global, { id: id as number, payload: edited }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
