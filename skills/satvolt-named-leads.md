@@ -37,15 +37,19 @@ Elige solo los pasos que responden a la pregunta. Cada uno cuesta créditos por 
 | Parcela y cubierta | `FIND_ROOFTOP` (añade `ROOFTOP_LIDAR` si hace falta la superficie medida) |
 | ¿Tiene paneles? | `FIND_ROOFTOP` → `IDENTIFY_SOLAR_PANELS` |
 | Potencial solar | `FIND_ROOFTOP` → `SOLAR_ANALYSIS` |
-| Consumo estimado | `FIND_ROOFTOP` → `ESTIMATE_CONSUMPTION` (mejor con CNAE: va después del agente que lo saca) |
+| Consumo estimado | `FIND_ROOFTOP` → `AI_AGENT` de CIF y CNAE → `ESTIMATE_CONSUMPTION` con `cnaeTemplate` apuntando al CNAE del agente. Sin CNAE la confianza no pasa de media y los fabricantes salen muy por debajo |
 | ¿Cumple un criterio? | `QUALIFY` con `qualificationDefinition` y **siempre** `messageTemplate` |
 | LinkedIn, CIF o decisor | `AI_AGENT` con el `agentId` de `satvolt catalog ai-agents` y su `messageTemplate` |
 
 Si ya hay una campaña o una plantilla con esos pasos bien configurados, reutilízala con `--template` o `--from-campaign` en vez de escribirlos.
 
+Las dependencias de cada paso están en `satvolt catalog actions` (`dependencies`): ordénalos según eso, no de memoria.
+
+Si el usuario no ha dicho qué considera bueno (un consumo, un criterio de cualificación, el producto que ofrece para buscar al decisor), pregúntaselo. Si no, da el dato tal cual, sin veredicto.
+
 ### Paso 1: Confirmar el coste
 
-Suma el `creditCost` de los pasos elegidos y multiplícalo por el número de empresas, más 10 por empresa si hay que geocodificar. Enséñalo en créditos, nunca en euros, y **pide confirmación una vez para el plan entero** antes de crear y ejecutar nada.
+Suma el `creditCost` de los pasos elegidos y multiplícalo por el número de empresas, más 10 por empresa si hay que geocodificar. Enséñalo en créditos, nunca en euros, y **pide confirmación una vez para el plan entero** antes de crear y ejecutar nada. Esa confirmación cubre todos los `run-step` del plan. Si por el camino el plan cambia (más pasos, más empresas, relanzar uno que falló), vuelve a preguntar.
 
 ### Paso 2: Crear la campaña con las empresas
 
@@ -67,6 +71,11 @@ suntropy satvolt leads add <campaignId> --company "Talleres Pérez SL | Polígon
 ```
 
 Si una empresa no trae coordenadas, la campaña tiene que tener `GEOCODE_ADDRESS`. Si no lo tiene, el error es `GEOCODE_STEP_REQUIRED`. Las campañas creadas con `create-from-leads` sin coordenadas ya lo tienen.
+
+`leads add` no añade pasos: el lead solo puede ejecutar los que ya tiene la campaña (`config get <campaignId>`). Si falta alguno de los que necesitas, tienes dos opciones:
+
+- añádelo con `steps add <campaignId> --action … --config …`, sabiendo que cambia el pipeline para todos los leads de esa campaña;
+- crea una campaña nueva con `create-from-leads`.
 
 ### Paso 3: Localizar cada empresa
 
@@ -91,6 +100,8 @@ suntropy satvolt leads run-step <campaignId> <idLead> IDENTIFY_SOLAR_PANELS --wa
 - **Sin `--continue`:** con `--continue` se encolan los pasos siguientes y se cobran sin que puedas leer el resultado entre medias.
 - **Si un paso falla o queda `skipped`/`unsatisfied`:** mira `step.error` y el fullData antes de seguir. Muchas veces no tiene sentido ejecutar el siguiente; por ejemplo, sin parcela no hay paneles que buscar. Un paso fallido no se cobra.
 - **Si son varios leads:** puedes ejecutar el mismo paso en todos antes de pasar al siguiente.
+- **Cómo nombrar el paso:** la acción (`FIND_ROOFTOP`) solo vale si aparece una vez en el pipeline. `AI_AGENT` y `QUALIFY` suelen repetirse: nómbralos por su `outputKey` o `resultKey` (`companyLinkedin`, `cif`), por su nombre («LinkedIn de empresa») o por su uid. Si no, el error es `AMBIGUOUS_STEP`.
+- **Si QUALIFY dice que no cualifica:** avisa al usuario antes de gastar en los agentes que vienen detrás.
 
 ### Paso 5: Responder
 
