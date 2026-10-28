@@ -60,27 +60,57 @@ function resolveAuth(opts: ClientOptions): { server: string; token: string; prof
 
 export type ServiceName = 'security' | 'solar' | 'templates' | 'profiles' | 'periods' | 'notifications' | 'satvolt' | 'payments';
 
+export const V1_AUTH_NOT_SUPPORTED_MESSAGE =
+  'This command needs an API v2 key. Run `suntropy auth login --web` (or `suntropy auth set-key --key sun_…`); ' +
+  'a user session or a legacy API key does not work with it.';
+
 /**
- * Client for an internal service route (`<server>/<service>`). These routes
- * take a user JWT or a legacy API key; an API v2 key (`sun_…`) is refused
- * here, before any request, with a message that says what to do instead of
- * the backend's opaque 403. Commands that support v2 keys (satvolt) build
- * their client with `createGatewayClient`.
+ * Where a command can send its requests. A command declares the API versions
+ * it supports and `createApiClient` picks one from the credential at request
+ * time: an API v2 key (`sun_…`) goes to `v2`, a user JWT or legacy key to `v1`.
+ * When the command does not support the version of the credential, it fails
+ * before any request with `V2_KEY_NOT_SUPPORTED` or `V1_AUTH_NOT_SUPPORTED`.
  */
-export function createServiceClient(service: ServiceName, opts: ClientOptions): AxiosInstance {
-  const { server, token } = resolveAuth(opts);
-  if (isV2Key(token)) throw new CliError(V2_KEY_NOT_SUPPORTED_MESSAGE, 'V2_KEY_NOT_SUPPORTED');
-  return buildClient(getServiceUrl(server, service), token, opts.verbose);
+export interface ApiRoutes {
+  /** Internal service route: `<server>/<service><suffix>`. */
+  v1?: { service: ServiceName; suffix?: string; baseUrlOverride?: string };
+  /** API gateway route: `<gateway><prefix>` (e.g. `/api/v2/leadgen`). */
+  v2?: { prefix: string };
+}
+
+export interface ApiClient {
+  client: AxiosInstance;
+  api: 'v1' | 'v2';
+}
+
+export function createApiClient(routes: ApiRoutes, opts: ClientOptions): ApiClient {
+  const { server, token, profile } = resolveAuth(opts);
+  if (isV2Key(token)) {
+    if (!routes.v2) throw new CliError(V2_KEY_NOT_SUPPORTED_MESSAGE, 'V2_KEY_NOT_SUPPORTED');
+    const gateway = resolveGatewayUrl(server, profile.gatewayUrl);
+    return { client: buildClient(`${gateway.url}${routes.v2.prefix}`, token, opts.verbose), api: 'v2' };
+  }
+  if (!routes.v1) throw new CliError(V1_AUTH_NOT_SUPPORTED_MESSAGE, 'V1_AUTH_NOT_SUPPORTED');
+  const base = routes.v1.baseUrlOverride || getServiceUrl(server, routes.v1.service);
+  return { client: buildClient(`${base}${routes.v1.suffix ?? ''}`, token, opts.verbose), api: 'v1' };
 }
 
 /**
- * Client for the API gateway with an API v2 key: `<gateway><pathPrefix>`
- * (e.g. `/api/v2/leadgen`). The gateway origin comes from `resolveGatewayUrl`.
+ * Client for an internal service route (`<server>/<service>`), for commands
+ * that only exist in v1. Same as `createApiClient({ v1: { service } })`: an
+ * API v2 key is refused before any request with `V2_KEY_NOT_SUPPORTED`.
+ */
+export function createServiceClient(service: ServiceName, opts: ClientOptions): AxiosInstance {
+  return createApiClient({ v1: { service } }, opts).client;
+}
+
+/**
+ * Client for the API gateway, for commands that only exist in v2. Same as
+ * `createApiClient({ v2: { prefix } })`: a user JWT or legacy key is refused
+ * before any request with `V1_AUTH_NOT_SUPPORTED`.
  */
 export function createGatewayClient(pathPrefix: string, opts: ClientOptions): AxiosInstance {
-  const { server, token, profile } = resolveAuth(opts);
-  const gateway = resolveGatewayUrl(server, profile.gatewayUrl);
-  return buildClient(`${gateway.url}${pathPrefix}`, token, opts.verbose);
+  return createApiClient({ v2: { prefix: pathPrefix } }, opts).client;
 }
 
 function buildClient(baseURL: string, token: string, verbose?: boolean): AxiosInstance {

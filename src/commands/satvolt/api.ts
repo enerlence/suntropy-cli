@@ -1,7 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { readFileSync } from 'fs';
 import type { Command } from 'commander';
-import { createGatewayClient, createServiceClient, handleApiError, resolveCredential, type ApiError } from '../../client.js';
+import { createApiClient, handleApiError, type ApiError } from '../../client.js';
 import type { OutputOptions } from '../../output.js';
 
 export type GlobalOpts = OutputOptions & {
@@ -28,19 +28,15 @@ export const LEADGEN_V2_PREFIX = '/api/v2/leadgen';
  *   points it elsewhere, for local development.
  */
 export function satvoltClient(global: GlobalOpts, timeout = 60000): AxiosInstance {
-  const client =
-    resolveCredential(global).kind === 'v2'
-      ? createGatewayClient(LEADGEN_V2_PREFIX, global)
-      : legacySatvoltClient(global);
+  const override = process.env.SUNTROPY_SATVOLT_URL?.trim().replace(/\/+$/, '');
+  const { client } = createApiClient(
+    {
+      v1: { service: 'satvolt', suffix: '/api/v1', baseUrlOverride: override || undefined },
+      v2: { prefix: LEADGEN_V2_PREFIX },
+    },
+    global,
+  );
   client.defaults.timeout = timeout;
-  return client;
-}
-
-function legacySatvoltClient(global: GlobalOpts): AxiosInstance {
-  const client = createServiceClient('satvolt', global);
-  const override = process.env.SUNTROPY_SATVOLT_URL?.trim();
-  const base = override ? override.replace(/\/+$/, '') : client.defaults.baseURL ?? '';
-  client.defaults.baseURL = `${base}/api/v1`;
   return client;
 }
 

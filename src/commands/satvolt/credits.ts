@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import type { AxiosInstance } from 'axios';
-import { createServiceClient, resolveCredential } from '../../client.js';
+import { createApiClient } from '../../client.js';
 import { output, outputError } from '../../output.js';
-import { call, getGlobalOpts, satvoltClient, satvoltError, type GlobalOpts } from './api.js';
+import { call, getGlobalOpts, LEADGEN_V2_PREFIX, satvoltClient, satvoltError, type GlobalOpts } from './api.js';
 
 const NEVER_PAYS =
   'The agent never pays: `credits checkout` only prints a Stripe Checkout URL.\n' +
@@ -27,12 +27,14 @@ interface CreditPack {
  * Paths are relative to the `credit-packs` collection.
  */
 function packsClient(global: GlobalOpts): { client: AxiosInstance; base: string; enveloped: boolean } {
-  if (resolveCredential(global).kind === 'v2') {
-    return { client: satvoltClient(global), base: '/credit-packs', enveloped: true };
-  }
-  const client = createServiceClient('payments', global);
+  const { client, api } = createApiClient(
+    { v1: { service: 'payments' }, v2: { prefix: LEADGEN_V2_PREFIX } },
+    global,
+  );
   client.defaults.timeout = 60000;
-  return { client, base: '/payments/satvolt/credit-packs', enveloped: false };
+  return api === 'v2'
+    ? { client, base: '/credit-packs', enveloped: true }
+    : { client, base: '/payments/satvolt/credit-packs', enveloped: false };
 }
 
 async function packsCall<T>(global: GlobalOpts, method: 'get' | 'post', subPath = ''): Promise<T> {
