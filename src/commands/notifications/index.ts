@@ -1,5 +1,7 @@
 import { Command, Option } from 'commander';
-import { createServiceClient, handleApiError, assertStudyObjectId } from '../../client.js';
+import { handleApiError, assertStudyObjectId } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { NOTIFICATIONS } from '../../api/ops/reference.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 import { loadConfig, getActiveProfile } from '../../config.js';
 
@@ -79,8 +81,6 @@ export function registerNotificationsCommands(program: Command): void {
         // click-through would point nowhere.
         if (opts.study) assertStudyObjectId(opts.study);
 
-        const client = createServiceClient('notifications', global);
-
         // Sender identity: explicit --from-user wins; else --as-alexandria signs
         // it as Alexandria; else fall back to the authenticated user (a plain
         // user-to-user notification).
@@ -115,24 +115,18 @@ export function registerNotificationsCommands(program: Command): void {
           },
         };
 
-        // `@Controller('notifications')` behind the `/notifications` gateway
-        // prefix → the create route is `/notifications`. clientUID/creator come
-        // from the JWT; `toUserUid` in the body is the recipient.
-        const res = await client.post('/notifications', notification);
-
-        // The service returns the created Notification, or a string reason when
-        // the client/type has notifications disabled — surface both clearly.
-        if (typeof res.data === 'string') {
-          output(
-            { sent: false, reason: res.data, toUser: opts.toUser },
-            global,
-          );
+        // clientUID/creator come from the credential; `toUserUid` in the body is
+        // the recipient. A notification disabled for the client or the type is
+        // not an error: it is reported with its reason (v1 string, v2 422 code).
+        const result = await invoke(NOTIFICATIONS.send, global, { notification });
+        if (!result.sent) {
+          output({ sent: false, reason: result.reason, toUser: opts.toUser }, global);
           return;
         }
         output(
           {
             sent: true,
-            notificationId: res.data?.idNotification,
+            notificationId: result.notificationId,
             toUser: opts.toUser,
             type: notification.notificationType,
             severity,

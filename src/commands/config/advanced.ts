@@ -1,8 +1,9 @@
 import { Command } from 'commander';
-import { AxiosInstance } from 'axios';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { ADVANCED } from '../../api/ops/settings.js';
 import { output, outputError } from '../../output.js';
-import { getGlobalOpts, buildPayload, editJson, pickKeys, coerceValue } from './shared.js';
+import { getGlobalOpts, buildPayload, editJson, pickKeys, coerceValue, type GlobalOpts } from './shared.js';
 
 /** camelCase → kebab-case ("logoUrl" → "logo-url"). */
 function kebab(key: string): string {
@@ -245,12 +246,12 @@ const SECTIONS: readonly Section[] = [
   GENERAL, COVER, SURFACES, CONSUMER, INCLINATION, ORIENTATION, PANELS, CONSUMPTION, RESULTS, CUSTOM_FIELDS,
 ];
 
-function getAdvanced(client: AxiosInstance): Promise<Record<string, unknown>> {
-  return client.get('/solar-form/config/advanced').then((r) => r.data as Record<string, unknown>);
+async function getAdvanced(global: GlobalOpts): Promise<Record<string, unknown>> {
+  return ((await invoke(ADVANCED.get, global, undefined)) ?? {}) as Record<string, unknown>;
 }
 
-function putAdvanced(client: AxiosInstance, payload: Record<string, unknown>): Promise<unknown> {
-  return client.put('/solar-form/config/advanced', payload).then((r) => r.data);
+function putAdvanced(global: GlobalOpts, payload: Record<string, unknown>): Promise<unknown> {
+  return invoke(ADVANCED.put, global, { payload });
 }
 
 /** Build a "Fields:" help block for a section. */
@@ -279,8 +280,7 @@ function attachSectionCommand(advanced: Command, section: Section): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(sec);
-        const client = createServiceClient('solar', global);
-        const doc = await getAdvanced(client);
+        const doc = await getAdvanced(global);
         output(pickKeys(doc, section.fields), global);
       } catch (err) {
         outputError(handleApiError(err));
@@ -304,7 +304,6 @@ function attachSectionCommand(advanced: Command, section: Section): void {
   setCmd.action(async (opts) => {
     try {
       const global = getGlobalOpts(sec);
-      const client = createServiceClient('solar', global);
 
       const flagValues: Record<string, unknown> = {};
       for (const field of section.fields) {
@@ -317,9 +316,9 @@ function attachSectionCommand(advanced: Command, section: Section): void {
         return;
       }
 
-      const current = await getAdvanced(client);
+      const current = await getAdvanced(global);
       const merged = { ...current, ...partial };
-      const res = await putAdvanced(client, merged);
+      const res = await putAdvanced(global, merged);
       output(pickKeys(res as Record<string, unknown>, section.fields), global);
     } catch (err) {
       outputError(handleApiError(err));
@@ -332,12 +331,11 @@ function attachSectionCommand(advanced: Command, section: Section): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(sec);
-        const client = createServiceClient('solar', global);
-        const current = await getAdvanced(client);
+        const current = await getAdvanced(global);
         const subset = pickKeys(current, section.fields);
         const edited = editJson(subset, `advanced-${section.name}`);
         const merged = { ...current, ...edited };
-        const res = await putAdvanced(client, merged);
+        const res = await putAdvanced(global, merged);
         output(pickKeys(res as Record<string, unknown>, section.fields), global);
       } catch (err) {
         outputError(handleApiError(err));
@@ -371,8 +369,7 @@ export function registerAdvancedCommands(solarform: Command): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(advanced);
-        const client = createServiceClient('solar', global);
-        const data = await getAdvanced(client);
+        const data = await getAdvanced(global);
         output(data, global);
       } catch (err) {
         outputError(handleApiError(err));
@@ -387,14 +384,13 @@ export function registerAdvancedCommands(solarform: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(advanced);
-        const client = createServiceClient('solar', global);
         const partial = buildPayload({}, opts.set, opts.fromFile);
         if (Object.keys(partial).length === 0) {
           outputError(new Error('No fields provided. Use --set or --from-file.'));
           return;
         }
-        const current = await getAdvanced(client);
-        const res = await putAdvanced(client, { ...current, ...partial });
+        const current = await getAdvanced(global);
+        const res = await putAdvanced(global, { ...current, ...partial });
         output(res, global);
       } catch (err) {
         outputError(handleApiError(err));
@@ -407,9 +403,7 @@ export function registerAdvancedCommands(solarform: Command): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(advanced);
-        const client = createServiceClient('solar', global);
-        const res = await client.delete('/solar-form/config/advanced');
-        output(res.data, global);
+        output(await invoke(ADVANCED.delete, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -427,16 +421,7 @@ export function registerAdvancedCommands(solarform: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(advanced);
-        const client = createServiceClient('solar', global);
-        const params: Record<string, string> = {};
-        if (opts.email) params.email = opts.email;
-        if (opts.url) params.url = opts.url;
-        const res = await client.post(
-          `/solar-form/config/default/advanced/${opts.clientUid}`,
-          {},
-          { params, headers: { 'suntropy-auth': opts.clientUid } },
-        );
-        output(res.data, global);
+        output(await invoke(ADVANCED.initDefault, global, { clientUid: opts.clientUid, email: opts.email, url: opts.url }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }

@@ -24,8 +24,8 @@ export class CliError extends Error {
 }
 
 export const V2_KEY_NOT_SUPPORTED_MESSAGE =
-  'This command still needs `suntropy auth login` (a user session). API v2 keys (sun_…) only work ' +
-  'with `suntropy satvolt …` and `suntropy auth status` for now.';
+  'This command needs `suntropy auth login` (a user session): it has no API v2 route, so an API v2 key ' +
+  '(sun_…) cannot run it. See docs/v2-gaps.md for the commands that stay on v1.';
 
 export interface ResolvedCredential {
   server: string;
@@ -211,6 +211,17 @@ export function assertFound<T>(data: T, entity: string, id: string): T {
 export function handleApiError(err: unknown): ApiError {
   if (axios.isAxiosError(err)) {
     const ae = err as AxiosError;
+    const v2 = v2ErrorBody(ae.response?.data);
+    if (v2) {
+      // API v2 error envelope: { error: { code, message, details? }, requestId }.
+      return {
+        error: true,
+        status: ae.response?.status || 0,
+        code: v2.code,
+        message: v2.message || ae.response?.statusText || ae.message,
+        ...(v2.details !== undefined ? { details: v2.details } : {}),
+      };
+    }
     return {
       error: true,
       status: ae.response?.status || 0,
@@ -224,4 +235,14 @@ export function handleApiError(err: unknown): ApiError {
     message: err instanceof Error ? err.message : String(err),
     ...(err instanceof CliError ? { code: err.code } : {}),
   };
+}
+
+/** `{ error: { code, message, details? } }`, the API v2 error body; undefined otherwise. */
+export function v2ErrorBody(data: unknown): { code: string; message?: string; details?: unknown } | undefined {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const e = (data as { error?: unknown }).error;
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return undefined;
+  const { code, message, details } = e as { code?: unknown; message?: unknown; details?: unknown };
+  if (typeof code !== 'string') return undefined;
+  return { code, message: typeof message === 'string' ? message : undefined, details };
 }

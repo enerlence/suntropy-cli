@@ -1,0 +1,561 @@
+{
+  "panels": [
+    {
+      "name": "Panel 1",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "peakPower": 451,
+      "efficiency": 21.5,
+      "costPerUnit": 120,
+      "active": true,
+      "clientUID": "client-1",
+      "creationTimestamp": "2026-10-01T10:00:00.000Z",
+      "solarPanelId": 1
+    },
+    {
+      "name": "Panel 2",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "peakPower": 452,
+      "efficiency": 21.5,
+      "costPerUnit": 120,
+      "active": true,
+      "clientUID": "client-1",
+      "creationTimestamp": "2026-10-02T10:00:00.000Z",
+      "solarPanelId": 2
+    },
+    {
+      "name": "Panel 3",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "peakPower": 453,
+      "efficiency": 21.5,
+      "costPerUnit": 120,
+      "active": true,
+      "clientUID": "client-1",
+      "creationTimestamp": "2026-10-03T10:00:00.000Z",
+      "solarPanelId": 3
+    }
+  ],
+  "inverters": [
+    {
+      "name": "Inverter 1",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "nominalPower": 5000,
+      "efficiency": 97.5,
+      "phaseNumber": "single_phase",
+      "isMicroinverter": false,
+      "isHybrid": false,
+      "costPerUnit": 900,
+      "active": true,
+      "idInverter": 1
+    },
+    {
+      "name": "Inverter 2",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "nominalPower": 10000,
+      "efficiency": 97.5,
+      "phaseNumber": "single_phase",
+      "isMicroinverter": false,
+      "isHybrid": true,
+      "costPerUnit": 900,
+      "active": true,
+      "idInverter": 2
+    },
+    {
+      "name": "Inverter 3",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "nominalPower": 15000,
+      "efficiency": 97.5,
+      "phaseNumber": "single_phase",
+      "isMicroinverter": false,
+      "isHybrid": false,
+      "costPerUnit": 900,
+      "active": true,
+      "idInverter": 3
+    }
+  ],
+  "batteries": [
+    {
+      "name": "Battery 1",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "capacity": 5,
+      "isModular": true,
+      "costPerUnit": 3000,
+      "active": true,
+      "batteryId": 1
+    },
+    {
+      "name": "Battery 2",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "capacity": 10,
+      "isModular": true,
+      "costPerUnit": 3000,
+      "active": true,
+      "batteryId": 2
+    },
+    {
+      "name": "Battery 3",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "capacity": 15,
+      "isModular": true,
+      "costPerUnit": 3000,
+      "active": true,
+      "batteryId": 3
+    }
+  ],
+  "chargers": [
+    {
+      "name": "Charger 1",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "maxPower": 7.4,
+      "connectorType": "T2",
+      "phaseNumber": "single_phase",
+      "costPerUnit": 700,
+      "active": true,
+      "idCharger": 1
+    },
+    {
+      "name": "Charger 2",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "maxPower": 7.4,
+      "connectorType": "T2",
+      "phaseNumber": "single_phase",
+      "costPerUnit": 700,
+      "active": true,
+      "idCharger": 2
+    },
+    {
+      "name": "Charger 3",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "maxPower": 7.4,
+      "connectorType": "T2",
+      "phaseNumber": "single_phase",
+      "costPerUnit": 700,
+      "active": false,
+      "idCharger": 3
+    }
+  ],
+  "heatpumps": [
+    {
+      "identifier": "HP 1",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "lowerPower": 2,
+      "upperPower": 9,
+      "scop": 4.2,
+      "costPerUnit": 5000,
+      "active": true,
+      "idHeatpump": 1
+    },
+    {
+      "identifier": "HP 2",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "lowerPower": 2,
+      "upperPower": 10,
+      "scop": 4.2,
+      "costPerUnit": 5000,
+      "active": true,
+      "idHeatpump": 2
+    },
+    {
+      "identifier": "HP 3",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "lowerPower": 2,
+      "upperPower": 11,
+      "scop": 4.2,
+      "costPerUnit": 5000,
+      "active": true,
+      "idHeatpump": 3
+    }
+  ],
+  "custom-assets": [
+    {
+      "label": "Asset 1",
+      "identifier": "A-1",
+      "isMaterial": true,
+      "costPerUnit": 10,
+      "active": true,
+      "creationTimestamp": "2026-10-03T10:00:00.000Z",
+      "idCustomAsset": 1
+    },
+    {
+      "label": "Asset 2",
+      "identifier": "A-2",
+      "isMaterial": true,
+      "costPerUnit": 20,
+      "active": true,
+      "creationTimestamp": "2026-10-02T10:00:00.000Z",
+      "idCustomAsset": 2
+    },
+    {
+      "label": "Asset 3",
+      "identifier": "A-3",
+      "isMaterial": true,
+      "costPerUnit": 30,
+      "active": true,
+      "creationTimestamp": "2026-10-01T10:00:00.000Z",
+      "idCustomAsset": 3
+    }
+  ],
+  "custom-asset-types": [
+    {
+      "label": "Type 1",
+      "isMaterialConcept": true,
+      "panelsQuantity": false,
+      "idCustomAssetType": 1
+    },
+    {
+      "label": "Type 2",
+      "isMaterialConcept": true,
+      "panelsQuantity": false,
+      "idCustomAssetType": 2
+    },
+    {
+      "label": "Type 3",
+      "isMaterialConcept": true,
+      "panelsQuantity": false,
+      "idCustomAssetType": 3
+    }
+  ],
+  "charger-kits": [
+    {
+      "identifier": "CK 1",
+      "charger": {
+        "idCharger": 1
+      },
+      "price": 900,
+      "phaseNumber": "single_phase",
+      "active": true,
+      "idVEChargerKit": 1
+    },
+    {
+      "identifier": "CK 2",
+      "charger": {
+        "idCharger": 1
+      },
+      "price": 900,
+      "phaseNumber": "single_phase",
+      "active": true,
+      "idVEChargerKit": 2
+    },
+    {
+      "identifier": "CK 3",
+      "charger": {
+        "idCharger": 1
+      },
+      "price": 900,
+      "phaseNumber": "single_phase",
+      "active": true,
+      "idVEChargerKit": 3
+    }
+  ],
+  "heatpump-kits": [
+    {
+      "identifier": "HK 1",
+      "heatpump": {
+        "idHeatpump": 1
+      },
+      "price": 6000,
+      "phaseNumber": "single_phase",
+      "active": true,
+      "idHeatpumpKit": 1
+    },
+    {
+      "identifier": "HK 2",
+      "heatpump": {
+        "idHeatpump": 1
+      },
+      "price": 6000,
+      "phaseNumber": "single_phase",
+      "active": true,
+      "idHeatpumpKit": 2
+    },
+    {
+      "identifier": "HK 3",
+      "heatpump": {
+        "idHeatpump": 1
+      },
+      "price": 6000,
+      "phaseNumber": "single_phase",
+      "active": true,
+      "idHeatpumpKit": 3
+    }
+  ],
+  "kits": [
+    {
+      "identifier": "Kit 1",
+      "peakPower": 5.4,
+      "panelNumber": 12,
+      "inverterNumber": 1,
+      "price": 6500,
+      "totalPrice": 7865,
+      "phaseNumber": "single_phase",
+      "active": true,
+      "kitSolarPanel": {
+        "idKitSolarPanel": 11,
+        "manufacturer": {
+          "idManufacturer": 7,
+          "name": "Acme",
+          "imageUrl": null
+        }
+      },
+      "kitInverter": {
+        "idKitInverter": 21
+      },
+      "battery": null,
+      "kitCategories": [],
+      "solarKitCustomAssets": [],
+      "idSolarKit": 1
+    },
+    {
+      "identifier": "Kit 2",
+      "peakPower": 5.4,
+      "panelNumber": 12,
+      "inverterNumber": 1,
+      "price": 6500,
+      "totalPrice": 7865,
+      "phaseNumber": "single_phase",
+      "active": true,
+      "kitSolarPanel": {
+        "idKitSolarPanel": 11,
+        "manufacturer": {
+          "idManufacturer": 7,
+          "name": "Acme",
+          "imageUrl": null
+        }
+      },
+      "kitInverter": {
+        "idKitInverter": 21
+      },
+      "battery": null,
+      "kitCategories": [],
+      "solarKitCustomAssets": [],
+      "idSolarKit": 2
+    },
+    {
+      "identifier": "Kit 3",
+      "peakPower": 5.4,
+      "panelNumber": 12,
+      "inverterNumber": 1,
+      "price": 6500,
+      "totalPrice": 7865,
+      "phaseNumber": "single_phase",
+      "active": true,
+      "kitSolarPanel": {
+        "idKitSolarPanel": 11,
+        "manufacturer": {
+          "idManufacturer": 7,
+          "name": "Acme",
+          "imageUrl": null
+        }
+      },
+      "kitInverter": {
+        "idKitInverter": 21
+      },
+      "battery": null,
+      "kitCategories": [],
+      "solarKitCustomAssets": [],
+      "idSolarKit": 3
+    }
+  ],
+  "kit-panels": [
+    {
+      "name": "KP 1",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "peakPower": 450,
+      "efficiency": 21,
+      "costPerUnit": 100,
+      "idKitSolarPanel": 1
+    },
+    {
+      "name": "KP 2",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "peakPower": 450,
+      "efficiency": 21,
+      "costPerUnit": 100,
+      "idKitSolarPanel": 2
+    },
+    {
+      "name": "KP 3",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "peakPower": 450,
+      "efficiency": 21,
+      "costPerUnit": 100,
+      "idKitSolarPanel": 3
+    }
+  ],
+  "kit-inverters": [
+    {
+      "name": "KI 1",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "nominalPower": 5000,
+      "efficiency": 97,
+      "costPerUnit": 800,
+      "idKitInverter": 1
+    },
+    {
+      "name": "KI 2",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "nominalPower": 5000,
+      "efficiency": 97,
+      "costPerUnit": 800,
+      "idKitInverter": 2
+    },
+    {
+      "name": "KI 3",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "nominalPower": 5000,
+      "efficiency": 97,
+      "costPerUnit": 800,
+      "idKitInverter": 3
+    }
+  ],
+  "kit-batteries": [
+    {
+      "name": "KB 1",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "capacity": 5,
+      "costPerUnit": 2500,
+      "idKitBattery": 1
+    },
+    {
+      "name": "KB 2",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "capacity": 5,
+      "costPerUnit": 2500,
+      "idKitBattery": 2
+    },
+    {
+      "name": "KB 3",
+      "manufacturer": {
+        "idManufacturer": 7,
+        "name": "Acme",
+        "imageUrl": null
+      },
+      "capacity": 5,
+      "costPerUnit": 2500,
+      "idKitBattery": 3
+    }
+  ],
+  "manufacturers": [
+    {
+      "idManufacturer": 7,
+      "name": "Acme",
+      "imageUrl": null
+    },
+    {
+      "idManufacturer": 8,
+      "name": "Bolt",
+      "imageUrl": null
+    }
+  ],
+  "custom-fields": [
+    {
+      "label": "Field 1",
+      "type": "number",
+      "customFieldOptions": [],
+      "idCustomField": 1
+    },
+    {
+      "label": "Field 2",
+      "type": "number",
+      "customFieldOptions": [],
+      "idCustomField": 2
+    },
+    {
+      "label": "Field 3",
+      "type": "number",
+      "customFieldOptions": [],
+      "idCustomField": 3
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { THEME } from '../../api/ops/settings.js';
 import { output, outputError } from '../../output.js';
 import { getGlobalOpts, buildPayload, editJson, pickKeys } from './shared.js';
 
@@ -42,14 +44,15 @@ export function registerThemeCommands(configRoot: Command): void {
 
   theme
     .command('get')
-    .description('Fetch the theme of a client (public endpoint, no auth required for reads).')
-    .requiredOption('--client-uid <uid>', 'Client UID whose theme should be fetched')
+    .description(
+      'Fetch the theme of a client. Default: the account of the credential.\n' +
+      'With an API v2 key, --client-uid can only be the key\'s own account (else CLIENT_UID_MISMATCH).',
+    )
+    .option('--client-uid <uid>', 'Client UID whose theme should be fetched (default: your account)')
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(theme);
-        const client = createServiceClient('security', global);
-        const res = await client.get(`/clients/config/clientThemeByClientUID/${opts.clientUid}`);
-        output(res.data, global);
+        output(await invoke(THEME.get, global, { clientUid: opts.clientUid }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -79,7 +82,6 @@ export function registerThemeCommands(configRoot: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(theme);
-        const client = createServiceClient('security', global);
 
         const flagValues: Record<string, unknown> = {
           primary: opts.primary,
@@ -99,8 +101,7 @@ export function registerThemeCommands(configRoot: Command): void {
           return;
         }
 
-        const res = await client.post('/clients/config/updateTheme', payload);
-        output(res.data, global);
+        output(await invoke(THEME.update, global, { payload }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -109,16 +110,14 @@ export function registerThemeCommands(configRoot: Command): void {
   theme
     .command('edit')
     .description('Open $EDITOR with the theme JSON and PUT the edited result.')
-    .requiredOption('--client-uid <uid>', 'Client UID to fetch the current theme from')
+    .option('--client-uid <uid>', 'Client UID to fetch the current theme from (default: your account)')
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(theme);
-        const client = createServiceClient('security', global);
-        const current = await client.get(`/clients/config/clientThemeByClientUID/${opts.clientUid}`);
-        const subset = pickKeys(current.data as Record<string, unknown>, THEME_KEYS);
+        const current = await invoke(THEME.get, global, { clientUid: opts.clientUid });
+        const subset = pickKeys(current as Record<string, unknown>, THEME_KEYS);
         const edited = editJson(subset, 'theme');
-        const res = await client.post('/clients/config/updateTheme', edited);
-        output(res.data, global);
+        output(await invoke(THEME.update, global, { payload: edited }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }

@@ -1,12 +1,9 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
-import { output, outputError, type OutputOptions } from '../../output.js';
-
-function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
-  let root = cmd;
-  while (root.parent) root = root.parent;
-  return root.opts() as any;
-}
+import { handleApiError } from '../../client.js';
+import { output, outputError } from '../../output.js';
+import { invoke } from '../../api/core.js';
+import { MANUFACTURERS } from '../../api/ops/inventory.js';
+import { getGlobalOpts } from './factory.js';
 
 export function registerManufacturersCommands(inventory: Command): void {
   const mfr = inventory.command('manufacturers').description('Manage manufacturers (referenced by all inventory devices)');
@@ -17,9 +14,7 @@ export function registerManufacturersCommands(inventory: Command): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(mfr);
-        const client = createServiceClient('solar', global);
-        const res = await client.get('/manufacturers');
-        output(res.data, global);
+        output(await invoke(MANUFACTURERS.list, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -32,10 +27,7 @@ export function registerManufacturersCommands(inventory: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(mfr);
-        const client = createServiceClient('solar', global);
-        const body = JSON.parse(opts.data);
-        const res = await client.post('/manufacturers', body);
-        output(res.data, global);
+        output(await invoke(MANUFACTURERS.create, global, { body: JSON.parse(opts.data) }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
