@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import { loadConfig, getActiveProfile, getServiceUrl, type SuntropyProfile } from './config.js';
+import { loadConfig, getActiveProfile, getServiceUrl, isV2Key, resolveGatewayUrl, type SuntropyProfile } from './config.js';
 
 export interface ClientOptions {
   server?: string;
@@ -12,10 +12,39 @@ export interface ApiError {
   error: true;
   status: number;
   message: string;
+  code?: string;
   details?: unknown;
 }
 
-function resolveAuth(opts: ClientOptions): { server: string; token: string } {
+/** An error with a machine-readable `code`, kept by `handleApiError`. */
+export class CliError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message);
+  }
+}
+
+export const V2_KEY_NOT_SUPPORTED_MESSAGE =
+  'This command still needs `suntropy auth login` (a user session). API v2 keys (sun_…) only work ' +
+  'with `suntropy satvolt …` and `suntropy auth status` for now.';
+
+export interface ResolvedCredential {
+  server: string;
+  token: string;
+  /** `v2`: an API v2 key (`sun_…`) for the gateway; `legacy`: user JWT or old API key. */
+  kind: 'v2' | 'legacy';
+  profile: SuntropyProfile;
+}
+
+/**
+ * Resolves the credential in use and tells its kind. Same precedence as
+ * always: --token > SUNTROPY_API_KEY > stored profile token.
+ */
+export function resolveCredential(opts: ClientOptions): ResolvedCredential {
+  const { server, token, profile } = resolveAuth(opts);
+  return { server, token, profile, kind: isV2Key(token) ? 'v2' : 'legacy' };
+}
+
+function resolveAuth(opts: ClientOptions): { server: string; token: string; profile: SuntropyProfile } {
   const config = loadConfig();
   const profile = getActiveProfile(config, opts.profile);
   const server = opts.server || profile.server;
@@ -26,13 +55,35 @@ function resolveAuth(opts: ClientOptions): { server: string; token: string } {
   if (!token) {
     throw new Error('Not authenticated. Run: suntropy auth set-key --key <jwt> or suntropy auth login, or set the SUNTROPY_API_KEY env var.');
   }
-  return { server, token };
+  return { server, token, profile };
 }
 
-export function createServiceClient(service: 'security' | 'solar' | 'templates' | 'profiles' | 'periods' | 'notifications' | 'satvolt', opts: ClientOptions): AxiosInstance {
-  const { server, token } = resolveAuth(opts);
-  const baseURL = getServiceUrl(server, service);
+export type ServiceName = 'security' | 'solar' | 'templates' | 'profiles' | 'periods' | 'notifications' | 'satvolt' | 'payments';
 
+/**
+ * Client for an internal service route (`<server>/<service>`). These routes
+ * take a user JWT or a legacy API key; an API v2 key (`sun_…`) is refused
+ * here, before any request, with a message that says what to do instead of
+ * the backend's opaque 403. Commands that support v2 keys (satvolt) build
+ * their client with `createGatewayClient`.
+ */
+export function createServiceClient(service: ServiceName, opts: ClientOptions): AxiosInstance {
+  const { server, token } = resolveAuth(opts);
+  if (isV2Key(token)) throw new CliError(V2_KEY_NOT_SUPPORTED_MESSAGE, 'V2_KEY_NOT_SUPPORTED');
+  return buildClient(getServiceUrl(server, service), token, opts.verbose);
+}
+
+/**
+ * Client for the API gateway with an API v2 key: `<gateway><pathPrefix>`
+ * (e.g. `/api/v2/leadgen`). The gateway origin comes from `resolveGatewayUrl`.
+ */
+export function createGatewayClient(pathPrefix: string, opts: ClientOptions): AxiosInstance {
+  const { server, token, profile } = resolveAuth(opts);
+  const gateway = resolveGatewayUrl(server, profile.gatewayUrl);
+  return buildClient(`${gateway.url}${pathPrefix}`, token, opts.verbose);
+}
+
+function buildClient(baseURL: string, token: string, verbose?: boolean): AxiosInstance {
   const client = axios.create({
     baseURL,
     timeout: 30000,
@@ -42,7 +93,7 @@ export function createServiceClient(service: 'security' | 'solar' | 'templates' 
     },
   });
 
-  if (opts.verbose) {
+  if (verbose) {
     client.interceptors.request.use((req) => {
       process.stderr.write(`→ ${req.method?.toUpperCase()} ${req.baseURL}${req.url}\n`);
       if (req.data) process.stderr.write(`  Body: ${JSON.stringify(req.data).slice(0, 200)}\n`);
@@ -141,5 +192,6 @@ export function handleApiError(err: unknown): ApiError {
     error: true,
     status: 0,
     message: err instanceof Error ? err.message : String(err),
+    ...(err instanceof CliError ? { code: err.code } : {}),
   };
 }
