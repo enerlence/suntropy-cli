@@ -1,3 +1,5 @@
 node_modules/
 dist/
 *.tsbuildinfo
+# Las skills se copian de enerlence/suntropy-cli-skills al publicar (npm run skills:sync)
+skills/

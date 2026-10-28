@@ -1,0 +1,24 @@
+# Las skills viven en enerlence/suntropy-cli-skills y el paquete publica una copia (npm run skills:sync).
+# Este check falla si la CLI tiene un subcomando de `suntropy satvolt` que la skill de referencia no cuenta,
+# para que la documentación no se quede atrás de la CLI. Se lanza también cada lunes, por si cambian las skills.
+name: skills
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run skills:sync
+      - run: npm run skills:check
