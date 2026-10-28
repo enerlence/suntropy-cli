@@ -12,6 +12,7 @@ import {
   satvoltClient,
   satvoltError,
 } from './api.js';
+import { leadsFromOpts } from './lead-inputs.js';
 
 const TERMINAL_CAMPAIGN_STATES = new Set(['completed', 'failed', 'canceled']);
 
@@ -545,6 +546,67 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
           start: opts.start ? true : undefined,
         };
         const data = await callMultipart(satvoltClient(global, 300000), '/campaigns/from-excel', file, payload);
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
+      }
+    });
+
+  // --- from leads ---
+  campaigns
+    .command('create-from-leads')
+    .summary('Create a campaign with 1-25 specific companies instead of an area.')
+    .description(
+      'Create a campaign whose leads are specific companies given by name (an inbound\n' +
+        'lead, a short list from the client) instead of the businesses of an area. Nothing\n' +
+        'runs unless --start: the campaign is left ready to run steps lead by lead with\n' +
+        '`leads run-step <campaignId> <leadId> <step> --wait`.\n\n' +
+        'Each lead needs a name, plus coordinates or something to locate it: its address\n' +
+        'or the campaign --region. Leads without coordinates get GEOCODE_ADDRESS (10\n' +
+        'credits) first in the pipeline: it finds the Google Maps place by name, and has\n' +
+        'to run before the other steps.\n\n' +
+        'Companies (up to 25, combined):\n' +
+        '  --company "Name | address"   repeatable; the address part is optional\n' +
+        '  --leads <json|@file|->      [{"name","address","coordinates","url","phone",\n' +
+        '                              "email","country","notes"}]\n\n' +
+        'Pipeline (one of them; without any, only GEOCODE_ADDRESS):\n' +
+        '  --template <id|name>  --from-campaign <id>  --steps <json|@file|->\n\n' +
+        'Examples:\n' +
+        '  suntropy satvolt campaigns create-from-leads --name "Geesol" \\\n' +
+        '    --company "Geesol Instalaciones Fotovoltaicas | C. Mansíos 5, Camas, Sevilla" \\\n' +
+        '    --steps \'[{"action":"FIND_ROOFTOP"},{"action":"IDENTIFY_SOLAR_PANELS"}]\'\n' +
+        '  suntropy satvolt campaigns create-from-leads --name "Inbound" --region "España" \\\n' +
+        '    --leads @inbound.json --template "Greenvolt industria"',
+    )
+    .option('--name <name>', 'Campaign name')
+    .option('--company <name|address>', 'Company "Name | address" (repeatable)', collect)
+    .option('--leads <json>', 'Leads as JSON array, @file or -')
+    .option('--region <text>', 'Region that narrows the search by name (e.g. "Sevilla, España")')
+    .option('--description <text>', 'Natural language description of the configuration')
+    .option('--template <idOrName>', 'Base the pipeline on a campaign template')
+    .option('--from-campaign <id>', 'Copy the pipeline of another campaign')
+    .option('--steps <json>', 'LEAD steps as JSON array, @file or -. See: satvolt catalog actions')
+    .option('--no-geocode', 'Do not add GEOCODE_ADDRESS (every lead must have coordinates)')
+    .option('--credit-limit <n>', 'Spend ceiling in credits (default: 100000)')
+    .option('--no-credit-limit', 'No spend ceiling')
+    .option('--start', 'Run the whole pipeline right away instead of step by step (spends credits)')
+    .action(async (opts) => {
+      const global = getGlobalOpts(campaigns);
+      try {
+        if (!opts.name) throw new Error('--name is required');
+        if (opts.template && opts.fromCampaign) throw new Error('Use either --template or --from-campaign, not both');
+        const body: Record<string, unknown> = { name: opts.name, leads: leadsFromOpts(opts) };
+        if (opts.region) body.region = opts.region;
+        if (opts.description !== undefined) body.description = opts.description;
+        if (opts.template) body.templateId = opts.template;
+        if (opts.fromCampaign) body.fromCampaignId = parseId(opts.fromCampaign, '--from-campaign');
+        if (opts.steps) body.steps = readJsonArg(opts.steps, '--steps');
+        if (opts.geocode === false) body.geocode = false;
+        const creditLimit = creditLimitFromOpts(opts);
+        if (creditLimit !== undefined) body.creditLimit = creditLimit;
+        if (opts.start) body.start = true;
+
+        const data = await call(satvoltClient(global), 'post', '/campaigns/from-leads', { data: body });
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));

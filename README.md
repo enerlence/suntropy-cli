@@ -407,8 +407,9 @@ validation `details` (step index, uid and field). `reset` and `delete` are in th
 and `duplicate` are `write`. Skills: [`satvolt-cli`](skills/satvolt-cli.md)
 (command reference), [`satvolt-api`](skills/satvolt-api.md) (HTTP API) and the
 workflows [`satvolt-campaign`](skills/satvolt-campaign.md),
-[`satvolt-probe-to-full-campaign`](skills/satvolt-probe-to-full-campaign.md) and
-[`satvolt-lead-troubleshooting`](skills/satvolt-lead-troubleshooting.md).
+[`satvolt-probe-to-full-campaign`](skills/satvolt-probe-to-full-campaign.md),
+[`satvolt-named-leads`](skills/satvolt-named-leads.md) (1-10 specific companies, step
+by step) and [`satvolt-lead-troubleshooting`](skills/satvolt-lead-troubleshooting.md).
 
 ### `suntropy config` - Configuration
 
@@ -457,4 +458,5 @@ Available skills:
 - **satvolt-api** - Satvolt public HTTP API (`/satvolt/api/v1`)
 - **satvolt-campaign** - Create, configure, follow and export Satvolt campaigns
 - **satvolt-probe-to-full-campaign** - Probe campaign from a template, validate, fix and extend to the whole area
+- **satvolt-named-leads** - Analyse 1-10 specific companies given by name (e.g. an inbound lead), running the steps one by one
 - **satvolt-lead-troubleshooting** - Diagnose failing steps and re-run them on leads
