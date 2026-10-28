@@ -18,7 +18,7 @@ export interface ApiError {
 
 /** An error with a machine-readable `code`, kept by `handleApiError`. */
 export class CliError extends Error {
-  constructor(message: string, readonly code: string) {
+  constructor(message: string, readonly code: string, readonly status?: number) {
     super(message);
   }
 }
@@ -231,7 +231,7 @@ export function handleApiError(err: unknown): ApiError {
   }
   return {
     error: true,
-    status: 0,
+    status: err instanceof CliError ? err.status ?? 0 : 0,
     message: err instanceof Error ? err.message : String(err),
     ...(err instanceof CliError ? { code: err.code } : {}),
   };

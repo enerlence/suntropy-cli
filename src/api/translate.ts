@@ -2,6 +2,7 @@
  * Translations between the v1 and v2 shapes (contract §3.0). Everything a
  * route side needs to make both versions print the same JSON.
  */
+import { CliError } from '../client.js';
 import { send, type Ctx, type V2Envelope } from './core.js';
 
 /** A page of items with the total of the collection: what `outputPaginated` prints. */
@@ -79,6 +80,31 @@ export async function v2All(ctx: Ctx, path: string, query: Record<string, unknow
     if (!env.pagination?.hasMore || items.length === 0) return all;
     offset = env.pagination.nextOffset ?? offset + items.length;
   }
+}
+
+// ─── Not found (§1.6, §3.0.5) ─────────────────────────────────────────────
+
+/** The error the v2 answers for a missing (or foreign) inventory item. */
+export const INVENTORY_NOT_FOUND = 'Inventory item not found';
+
+/** `404 NOT_FOUND`, as the v2 reports it, for a v1 read that found nothing. */
+export function notFoundError(message = INVENTORY_NOT_FOUND): CliError {
+  return new CliError(message, 'NOT_FOUND', 404);
+}
+
+/**
+ * A v1 `GET :id` answers 200 with an empty body when the item does not exist
+ * (or is of another tenant); the v2 answers 404 `NOT_FOUND`. Both paths fail
+ * the same way.
+ */
+export function foundOr404<T>(data: T, message = INVENTORY_NOT_FOUND): T {
+  const empty =
+    data === undefined ||
+    data === null ||
+    data === '' ||
+    (typeof data === 'object' && !Array.isArray(data) && Object.keys(data as object).length === 0);
+  if (empty) throw notFoundError(message);
+  return data;
 }
 
 // ─── Deletes (§3.0.4) ─────────────────────────────────────────────────────

@@ -10,6 +10,8 @@ import {
   deletedBatchV2,
   deletedOne,
   eachItem,
+  foundOr404,
+  notFoundError,
   numericId,
   omit,
   pageInClient,
@@ -29,8 +31,10 @@ export interface InventoryV2 {
   resource: string;
   /** Order that reproduces the v1 list: `-creationTimestamp` or `id` (§1.3). */
   sort: 'id' | '-creationTimestamp';
-  /** `filter` sends `active=true`, like the v1 filters (default true). */
-  filterActive?: boolean;
+  /** The entity has an `active` column (default true): `--active-only` and `filter` send `active=true`. */
+  hasActive?: boolean;
+  /** Order of `filter`, when the v1 filter does not order like the v2 search default (`-creationTimestamp`). */
+  filterSort?: 'id';
   /** v1 relation objects → v2 id references in create/update bodies. */
   refs?: readonly RefRule[];
   /** Heat pumps: v1 `identifier` is v2 `name` in bodies; the v2 alias `name` is dropped from responses. */
@@ -58,8 +62,8 @@ export interface ResourceConfig {
   getPath?: string;
   /** Use the whole list to get by ID (when the v1 has no GET :id endpoint) */
   getViaFilter?: boolean;
-  /** v1 list reads `size` instead of `limit` (inverters). */
-  v1LimitParam?: 'size';
+  /** v1 `PUT :id` reads the id from the body, not from the path (batteries). */
+  v1IdInBody?: boolean;
   /**
    * How the v1 list selects active items:
    * - `unactive` (default): `unactive=true` = all, absent = active;
@@ -105,7 +109,7 @@ function toV2Body(cfg: ResourceConfig, body: Json | undefined): Json {
 async function v1ListPage(ctx: Ctx, cfg: ResourceConfig, limit: number, offset: number, unactive: boolean): Promise<Page> {
   const data = await send(ctx, 'get', cfg.basePath, {
     query: {
-      [cfg.v1LimitParam ?? 'limit']: limit,
+      limit,
       offset,
       ...(unactive ? { unactive: true } : {}),
     },
@@ -145,7 +149,7 @@ function listOp(cfg: ResourceConfig): Operation<ListInput, Page> {
         ctx,
         'get',
         inventoryPath(cfg),
-        { sort: cfg.v2.sort, ...(activeOnly ? { active: true } : {}) },
+        { sort: cfg.v2.sort, ...(activeOnly && cfg.v2.hasActive !== false ? { active: true } : {}) },
         limit,
         offset,
       );
@@ -161,10 +165,10 @@ function getOp(cfg: ResourceConfig): Operation<{ id: string }, unknown> {
           // No GET :id in v1: list everything and look it up.
           const data = await send(ctx, 'get', cfg.basePath, { query: { unactive: true } });
           const item = parseV1List(data).items.find((r) => String((r as Json)[cfg.idField]) === String(id));
-          if (!item) throw new Error(`${cfg.singular} with ${cfg.idField}=${id} not found`);
+          if (!item) throw notFoundError();
           return item;
         })
-      : v1('get', ({ id }) => (cfg.getPath ? cfg.getPath.replace(':id', id) : `${cfg.basePath}/${id}`)),
+      : v1('get', ({ id }) => (cfg.getPath ? cfg.getPath.replace(':id', id) : `${cfg.basePath}/${id}`), { out: (data) => foundOr404(data) }),
     v2: v2('get', ({ id }) => inventoryPath(cfg, id), { out: fromV2(cfg) }),
   });
 }
@@ -181,7 +185,9 @@ function updateOp(cfg: ResourceConfig): Operation<{ id: string; body: Json | und
     v1: cfg.putBodyOnly
       ? // The id goes in the body; as a number so TypeORM matches the integer key.
         v1('put', cfg.basePath, { body: ({ id, body }) => ({ ...body, [cfg.idField]: numericId(id) }) })
-      : v1('put', ({ id }) => `${cfg.basePath}/${id}`, { body: ({ body }) => body }),
+      : v1('put', ({ id }) => `${cfg.basePath}/${id}`, {
+          body: ({ id, body }) => (cfg.v1IdInBody ? { ...body, [cfg.idField]: numericId(id) } : body),
+        }),
     v2: v2('patch', ({ id }) => inventoryPath(cfg, id), { body: ({ body }) => toV2Body(cfg, body), out: fromV2(cfg) }),
   });
 }
@@ -221,7 +227,7 @@ function filterOp(cfg: ResourceConfig): Operation<FilterInput, Page> {
         ctx,
         'post',
         `${inventoryPath(cfg)}/search`,
-        cfg.v2.filterActive === false ? {} : { active: true },
+        { ...(cfg.v2.hasActive === false ? {} : { active: true }), ...(cfg.v2.filterSort ? { sort: cfg.v2.filterSort } : {}) },
         limit,
         offset,
         body,
@@ -351,20 +357,32 @@ export const MANUFACTURERS = {
   }),
 };
 
+/** v2-style `customAssetTypeId` → v1 `customAssetType: { idCustomAssetType }`. */
+function customFieldV1Body(body: Json | undefined): Json | undefined {
+  if (!body || !('customAssetTypeId' in body)) return body;
+  const { customAssetTypeId, ...rest } = body;
+  return {
+    ...rest,
+    customAssetType: customAssetTypeId === null ? null : { idCustomAssetType: numericId(customAssetTypeId) },
+  };
+}
+
 export const CUSTOM_FIELDS = {
   list: wholeList('inventory.custom-fields.list', '/custom-asset/custom-field/all', '/inventory/custom-fields'),
   get: operation<{ id: string }, unknown>('inventory.custom-fields.get', {
-    v1: v1('get', ({ id }) => `/custom-asset/custom-field/id/${id}`),
+    v1: v1('get', ({ id }) => `/custom-asset/custom-field/id/${id}`, { out: (data) => foundOr404(data) }),
     v2: v2('get', ({ id }) => `/inventory/custom-fields/${id}`),
   }),
   create: operation<{ body: Json | undefined }, unknown>('inventory.custom-fields.create', {
-    v1: v1('post', '/custom-asset/custom-field', { body: ({ body }) => body }),
+    // The documented `customAssetTypeId` is not a column: v1 needs the relation
+    // object, or it saves a field that belongs to no type.
+    v1: v1('post', '/custom-asset/custom-field', { body: ({ body }) => customFieldV1Body(body) }),
     v2: v2('post', '/inventory/custom-fields', {
       body: ({ body }) => toV2Refs(body, [{ from: 'customAssetType', to: 'customAssetTypeId', key: 'idCustomAssetType' }]),
     }),
   }),
   update: operation<{ id: string; body: Json | undefined }, unknown>('inventory.custom-fields.update', {
-    v1: v1('put', ({ id }) => `/custom-asset/custom-field/${id}`, { body: ({ body }) => body }),
+    v1: v1('put', ({ id }) => `/custom-asset/custom-field/${id}`, { body: ({ body }) => customFieldV1Body(body) }),
     v2: v2('patch', ({ id }) => `/inventory/custom-fields/${id}`, {
       body: ({ body }) =>
         toV2Refs(omit(body, ['idCustomField', 'clientUID']), [{ from: 'customAssetType', to: 'customAssetTypeId', key: 'idCustomAssetType' }]),
@@ -376,6 +394,6 @@ export const CUSTOM_FIELDS = {
   }),
 };
 
-function notFound(what: string, id: string | number): Error {
-  return Object.assign(new Error(`${what} ${id} not found`), { code: 'NOT_FOUND' });
+function notFound(_what: string, _id: string | number): Error {
+  return notFoundError();
 }

@@ -31,7 +31,9 @@ export const RESOURCES: ResourceConfig[] = [
     listFields: ['name', 'manufacturer', 'nominalPower', 'efficiency', 'phaseNumber', 'isMicroinverter', 'isHybrid', 'costPerUnit', 'active'],
     batchDeletePath: 'delete-batch-solar-inverters',
     putBodyOnly: true,
-    v1LimitParam: 'size',
+    // `GET /solar-inverter` pages with `size` but returns no total: the CLI
+    // reads the whole list and pages it, so `total` and `hasMore` are real.
+    v1WholeList: true,
     v2: { resource: 'inverters', sort: 'id' },
   },
   {
@@ -41,6 +43,7 @@ export const RESOURCES: ResourceConfig[] = [
     idField: 'batteryId',
     listFields: ['name', 'manufacturer', 'capacity', 'isModular', 'costPerUnit', 'active'],
     batchDeletePath: 'delete-batch-solar-batteries',
+    v1IdInBody: true,
     v2: { resource: 'batteries', sort: 'id' },
   },
   {
@@ -91,7 +94,8 @@ export const RESOURCES: ResourceConfig[] = [
     getPath: '/custom-asset/type/id/:id',
     v1Active: 'none',
     v1WholeList: true,
-    v2: { resource: 'custom-asset-types', sort: 'id', filterActive: false },
+    // No `active` column: `--active-only` changes nothing (v1 lists them all).
+    v2: { resource: 'custom-asset-types', sort: 'id', hasActive: false },
   },
   {
     name: 'charger-kits',
@@ -136,7 +140,8 @@ export const KITS_RESOURCE: ResourceConfig = {
   batchDeletePath: 'delete-batch-solar-kits',
   getViaFilter: true,
   v1WholeList: true,
-  v2: { resource: 'kits', sort: 'id', refs: KIT_REFS },
+  // The v1 kit filter does not order (primary key order).
+  v2: { resource: 'kits', sort: 'id', filterSort: 'id', refs: KIT_REFS },
 };
 
 export const resourceByName = (name: string): ResourceConfig => {

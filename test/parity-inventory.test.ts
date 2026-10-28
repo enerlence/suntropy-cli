@@ -66,8 +66,8 @@ function cases(cfg: ResourceConfig): Case[] {
         method: 'GET',
         path: base,
         query: cfg.v1WholeList
-          ? { limit: null, unactive: mode === 'unactive' ? 'true' : null }
-          : { [cfg.v1LimitParam ?? 'limit']: mode === 'split' ? '2' : '2', unactive: mode === 'split' ? null : 'true' },
+          ? { limit: null, size: null, unactive: mode === 'unactive' ? 'true' : null }
+          : { limit: '2', unactive: mode === 'split' ? null : 'true' },
       },
     ],
     expectV2: [{ method: 'GET', path: v2Base, query: { limit: '2', offset: '0', sort: cfg.v2.sort, active: null } }],
@@ -108,7 +108,11 @@ function cases(cfg: ResourceConfig): Case[] {
     args: ['inventory', cfg.name, 'update', '1', '--data', JSON.stringify(bodies.v1)],
     v1: cfg.putBodyOnly ? { [`PUT ${base}`]: first } : { [`PUT ${base}/1`]: first },
     v2: { [`PATCH ${v2Base}/1`]: env(asV2(cfg, first)) },
-    expectV1: [cfg.putBodyOnly ? { method: 'PUT', path: base, body: { ...bodies.v1, [cfg.idField]: 1 } } : { method: 'PUT', path: `${base}/1`, body: bodies.v1 }],
+    expectV1: [
+      cfg.putBodyOnly
+        ? { method: 'PUT', path: base, body: { ...bodies.v1, [cfg.idField]: 1 } }
+        : { method: 'PUT', path: `${base}/1`, body: cfg.v1IdInBody ? { ...bodies.v1, [cfg.idField]: 1 } : bodies.v1 },
+    ],
     expectV2: [{ method: 'PATCH', path: `${v2Base}/1`, body: bodies.v2 }],
   });
 
@@ -149,7 +153,7 @@ function cases(cfg: ResourceConfig): Case[] {
       {
         method: 'POST',
         path: `${v2Base}/search`,
-        query: { limit: '2', offset: '0', active: cfg.v2.filterActive === false ? null : 'true' },
+        query: { limit: '2', offset: '0', active: cfg.v2.hasActive === false ? null : 'true', sort: cfg.v2.filterSort ?? null },
         body: cfg.v2.identifierIsName ? { name: 'HP' } : query,
       },
     ],
@@ -241,7 +245,8 @@ const simple: Case[] = [
     args: ['inventory', 'custom-fields', 'create', '--data', '{"label":"Power","type":"number","customAssetTypeId":1}'],
     v1: { 'POST /solar/custom-asset/custom-field': INV['custom-fields'][0] },
     v2: { 'POST /api/v2/inventory/custom-fields': { status: 201, body: env(INV['custom-fields'][0]) } },
-    expectV1: [{ method: 'POST', path: '/solar/custom-asset/custom-field', body: { label: 'Power', type: 'number', customAssetTypeId: 1 } }],
+    // v1 has no customAssetTypeId column: without the relation object the field belongs to no type.
+    expectV1: [{ method: 'POST', path: '/solar/custom-asset/custom-field', body: { label: 'Power', type: 'number', customAssetType: { idCustomAssetType: 1 } } }],
     expectV2: [{ method: 'POST', path: '/api/v2/inventory/custom-fields', body: { label: 'Power', type: 'number', customAssetTypeId: 1 } }],
   },
   {
@@ -389,3 +394,47 @@ simple.push({
 });
 
 for (const c of simple) test(c.name, () => parity(c).then(() => undefined));
+
+// ─── get of a missing item: 404 NOT_FOUND on both paths (§1.6) ─────────────
+
+for (const cfg of RESOURCES) {
+  const getPath = `${S}${cfg.getPath ? cfg.getPath.replace(':id', '404') : `${cfg.basePath}/404`}`;
+  test(`inventory ${cfg.name} get of a missing id: NOT_FOUND on both paths`, async () => {
+    const r = await parity({
+      name: 'missing',
+      args: ['inventory', cfg.name, 'get', '404'],
+      // The v1 GET :id answers 200 with an empty body.
+      v1: { [`GET ${getPath}`]: { status: 200, body: '' } },
+      v2: { [`GET ${V2}/${cfg.v2.resource}/404`]: { status: 404, body: { error: { code: 'NOT_FOUND', message: 'Inventory item not found' } } } },
+      expectV1: [{ method: 'GET', path: getPath }],
+      expectV2: [{ method: 'GET', path: `${V2}/${cfg.v2.resource}/404` }],
+      code: 1,
+    });
+    assert.equal(r.v1.stdout, '');
+    assert.deepEqual(JSON.parse(r.v1.stderr), JSON.parse(r.v2.stderr));
+    assert.deepEqual(JSON.parse(r.v1.stderr), { error: true, message: 'Inventory item not found', status: 404, code: 'NOT_FOUND' });
+  });
+}
+
+test('inventory kits get of a missing id: NOT_FOUND on both paths', async () => {
+  const r = await parity({
+    name: 'missing kit',
+    args: ['inventory', 'kits', 'get', '404'],
+    v1: { 'GET /solar/solar-kits': INV.kits },
+    v2: { 'GET /api/v2/inventory/kits/404': { status: 404, body: { error: { code: 'NOT_FOUND', message: 'Inventory item not found' } } } },
+    expectV1: [{ method: 'GET', path: '/solar/solar-kits' }],
+    expectV2: [{ method: 'GET', path: '/api/v2/inventory/kits/404' }],
+    code: 1,
+  });
+  assert.deepEqual(JSON.parse(r.v1.stderr), JSON.parse(r.v2.stderr));
+});
+
+test('inventory custom-asset-types list --active-only: v2 sends no active (no such column)', () =>
+  parity({
+    name: 'types active-only',
+    args: ['inventory', 'custom-asset-types', 'list', '--active-only'],
+    v1: { 'GET /solar/custom-asset/type': INV['custom-asset-types'] },
+    v2: { 'GET /api/v2/inventory/custom-asset-types': page(INV['custom-asset-types'], INV['custom-asset-types'].length, 20, 0) },
+    expectV1: [{ method: 'GET', path: '/solar/custom-asset/type' }],
+    expectV2: [{ method: 'GET', path: '/api/v2/inventory/custom-asset-types', query: { active: null } }],
+  }).then(() => undefined));
