@@ -17,7 +17,13 @@ npx @enerlence/suntropy-cli <command>
 ## Authentication
 
 ```bash
-# API key (preferred for agents)
+# Browser login (recommended, also for agents): prints a URL and a code; the
+# user approves it in the Suntropy app and the CLI stores an API v2 key (sun_…)
+suntropy auth login --web
+suntropy auth login --web --device-name "Alexandria sandbox" --scopes leadgen:read,credits:read
+
+# API key: an API v2 key (sun_…) or a legacy JWT API key
+suntropy auth set-key --key sun_xxxxxxxx
 suntropy auth set-key --key <jwt-api-key>
 
 # Target a specific server / profile (global options — see "Global Options")
@@ -35,6 +41,65 @@ suntropy auth status
 > root command (e.g. `suntropy --profile dev auth status`). They apply to every
 > subcommand, including `auth`.
 
+### Two kinds of credential
+
+| Credential | From | Goes to | Works with |
+|---|---|---|---|
+| **API v2 key** (`sun_…`) | `auth login --web`, `auth set-key sun_…`, or the API v2 panel in Configuration | the API gateway, `<gateway>/api/v2/…` | `satvolt …` (LeadGen and credits) and `auth status`, for now |
+| **JWT** (user session or legacy API key) | `auth login --email --password`, `auth set-key <jwt>` | the internal routes, `<server>/<service>/…` | every command |
+
+API v2 keys are stored hashed by the gateway, carry scopes (by default
+`leadgen:read`, `leadgen:write`, `credits:read`) and are really revoked when you
+delete them in Configuration. Any other command run with a `sun_` key stops
+before calling the API with a clear message (code `V2_KEY_NOT_SUPPORTED`): it
+still needs `suntropy auth login`. The other way round, a command that only
+exists in the v2 stops with `V1_AUTH_NOT_SUPPORTED` when run with a user
+session or a legacy key. Each command declares the APIs it supports and the
+CLI picks one per request from the credential (`createApiClient` in
+`src/client.ts`). What is missing in the v2 for the rest of the
+CLI is listed in [`docs/v2-gaps.md`](docs/v2-gaps.md).
+
+- `auth status` shows `credential: "sun_"` or `"jwt"`; for a `sun_` key it asks
+  the gateway (`GET /api/v2/me`) for its `label`, `scopes`, `clientUID` and
+  `expiresAt`. A revoked key shows `authenticated: false` and `INVALID_KEY`.
+- `auth refresh` only applies to JWTs. `auth logout` clears either kind.
+
+### Browser login (`auth login --web`)
+
+OAuth device authorization grant (RFC 8628) against the API gateway:
+
+1. The CLI asks the gateway for a code (`POST /api-gateway/device/code`).
+2. It prints the URL (`https://app.suntropy.ai/cli?code=XXXX-XXXX`) and the code,
+   and opens the browser only when there is one (interactive terminal on macOS or
+   Windows, or Linux with `DISPLAY`/`WAYLAND_DISPLAY`; never with `CI=true`;
+   `--no-browser` to skip it).
+3. A user **admin** of the account approves it with their own session.
+4. The CLI polls `POST /api-gateway/device/token` (respecting `interval`, +5 s on
+   `slow_down`) and stores the key in the active profile (or `--profile`).
+
+With `--format json` (the default) the output is one JSON object per line, so
+an agent can hand the URL to the user before the command ends:
+
+```json
+{"verification_uri":"https://app.suntropy.ai/cli","verification_uri_complete":"https://app.suntropy.ai/cli?code=BCDF-GHJK","user_code":"BCDF-GHJK","expires_in":600}
+{"status":"approved","label":"CLI · my-laptop · 2026-10-28","clientUID":"…","scopes":["leadgen:read","leadgen:write","credits:read"]}
+```
+
+On failure the second line is `{"status":"denied"|"expired"|"error","message":"…"}`
+and the exit code is 1. Agents never ask for or type passwords or codes: they
+give the URL and the code to the user and wait.
+
+### Gateway origin
+
+The API v2 gateway is resolved in this order:
+
+1. `SUNTROPY_GATEWAY_URL` environment variable;
+2. `gatewayUrl` of the profile (`suntropy config set gatewayUrl http://localhost:8087`);
+3. derived from the profile server: `api.enerlence.com` (prod) → `https://api.suntropy.ai`;
+   `api-dev.enerlence.com` (dev) → `https://api-dev.enerlence.com`.
+
+Any other server (localhost, a custom host) needs 1 or 2.
+
 ### Token resolution order
 
 The auth token is resolved in this order (first non-empty wins):
@@ -51,10 +116,9 @@ inject a just-in-time credential without a prior `auth login` / `auth set-key`:
 SUNTROPY_API_KEY=<jwt> suntropy studies list
 ```
 
-> ⚠️ The value must be a **JWT** (the one you'd pass to `auth set-key --key`),
-> since the CLI sends it as `Authorization: Bearer <token>`. Despite the name, it
-> is not a `shp_`/`devic-`-style API key — an invalid format yields a 401 from
-> the backend.
+> ⚠️ The value must be a **JWT** or an **API v2 key** (`sun_…`), i.e. what you'd
+> pass to `auth set-key --key`; the CLI sends it as `Authorization: Bearer <token>`.
+> With a `sun_` key only `satvolt` works for now (see "Two kinds of credential").
 
 ## Global Options
 
@@ -337,10 +401,22 @@ suntropy templates list --fields _id,templateName --format csv
 
 ### `suntropy satvolt` - Satvolt Campaigns
 
-Lead-generation campaigns on the Satvolt public API (`<server>/satvolt/api/v1`,
-`localhost:8099` locally), with the same token as the rest of the CLI. Every
-pipeline action spends credits per lead: check `estimatedCreditsPerLead` before
-starting.
+Lead-generation campaigns on the Satvolt public API. The route depends on the
+credential:
+
+- API v2 key (`sun_…`): `<gateway>/api/v2/leadgen/…` (see "Gateway origin");
+- JWT: `<server>/satvolt/api/v1/…`, like any other service (prod
+  `https://api.enerlence.com/satvolt`, `localhost:8099` locally).
+
+Satvolt is no longer pinned to the dev cluster: it follows the profile server
+like the rest of the CLI. `SUNTROPY_SATVOLT_URL` still overrides the JWT route,
+for local development. Every pipeline action spends credits per lead: check
+`estimatedCreditsPerLead` before starting.
+
+Error codes reach the output in `code`, with what to do in `message`:
+`INVALID_KEY` (revoked or expired key: `auth login --web` again),
+`INSUFFICIENT_SCOPE`, `SATVOLT_NOT_ENABLED` (LeadGen not enabled for the
+account), `ACCESS_CHECK_UNAVAILABLE`…
 
 ```bash
 # Reference data
@@ -398,7 +474,18 @@ suntropy satvolt export-tables columns set <tableId> Consumo --label "Consumo (k
 suntropy satvolt export-tables columns move <tableId> Teléfono --position 0
 suntropy satvolt export-tables data <tableId> --format csv
 suntropy satvolt export-tables export <tableId> --file-format xlsx --out leads.xlsx
+
+# Credits (the agent never pays: it gives the Checkout URL to the user)
+suntropy satvolt credits balance                     # balance, held, available, monthly cap
+suntropy satvolt credits packs --format human        # id, credits, bonus, price
+suntropy satvolt credits checkout credits-10k        # {"url":"https://checkout.stripe.com/…"}
 ```
+
+`credits checkout` only prints the Stripe Checkout URL; it charges nothing. The
+user opens it and pays in Stripe, and then `credits balance` confirms the
+credits arrived. Only an admin of the account can buy. With a JWT, `balance`
+goes to Satvolt (`<server>/satvolt/api/v1/credits`) and `packs`/`checkout` to
+payments (`<server>/payments/payments/satvolt/credit-packs…`).
 
 JSON arguments (`--steps`, `--config`, `--data`, `--columns`, `--polygon`) accept
 inline JSON, `@file.json` or `-` for stdin. Errors keep the API `code` and

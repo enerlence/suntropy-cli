@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import { loadConfig, getActiveProfile, getServiceUrl, type SuntropyProfile } from './config.js';
+import { loadConfig, getActiveProfile, getServiceUrl, isV2Key, resolveGatewayUrl, type SuntropyProfile } from './config.js';
 
 export interface ClientOptions {
   server?: string;
@@ -12,10 +12,39 @@ export interface ApiError {
   error: true;
   status: number;
   message: string;
+  code?: string;
   details?: unknown;
 }
 
-function resolveAuth(opts: ClientOptions): { server: string; token: string } {
+/** An error with a machine-readable `code`, kept by `handleApiError`. */
+export class CliError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message);
+  }
+}
+
+export const V2_KEY_NOT_SUPPORTED_MESSAGE =
+  'This command still needs `suntropy auth login` (a user session). API v2 keys (sun_…) only work ' +
+  'with `suntropy satvolt …` and `suntropy auth status` for now.';
+
+export interface ResolvedCredential {
+  server: string;
+  token: string;
+  /** `v2`: an API v2 key (`sun_…`) for the gateway; `legacy`: user JWT or old API key. */
+  kind: 'v2' | 'legacy';
+  profile: SuntropyProfile;
+}
+
+/**
+ * Resolves the credential in use and tells its kind. Same precedence as
+ * always: --token > SUNTROPY_API_KEY > stored profile token.
+ */
+export function resolveCredential(opts: ClientOptions): ResolvedCredential {
+  const { server, token, profile } = resolveAuth(opts);
+  return { server, token, profile, kind: isV2Key(token) ? 'v2' : 'legacy' };
+}
+
+function resolveAuth(opts: ClientOptions): { server: string; token: string; profile: SuntropyProfile } {
   const config = loadConfig();
   const profile = getActiveProfile(config, opts.profile);
   const server = opts.server || profile.server;
@@ -26,13 +55,65 @@ function resolveAuth(opts: ClientOptions): { server: string; token: string } {
   if (!token) {
     throw new Error('Not authenticated. Run: suntropy auth set-key --key <jwt> or suntropy auth login, or set the SUNTROPY_API_KEY env var.');
   }
-  return { server, token };
+  return { server, token, profile };
 }
 
-export function createServiceClient(service: 'security' | 'solar' | 'templates' | 'profiles' | 'periods' | 'notifications' | 'satvolt', opts: ClientOptions): AxiosInstance {
-  const { server, token } = resolveAuth(opts);
-  const baseURL = getServiceUrl(server, service);
+export type ServiceName = 'security' | 'solar' | 'templates' | 'profiles' | 'periods' | 'notifications' | 'satvolt' | 'payments';
 
+export const V1_AUTH_NOT_SUPPORTED_MESSAGE =
+  'This command needs an API v2 key. Run `suntropy auth login --web` (or `suntropy auth set-key --key sun_…`); ' +
+  'a user session or a legacy API key does not work with it.';
+
+/**
+ * Where a command can send its requests. A command declares the API versions
+ * it supports and `createApiClient` picks one from the credential at request
+ * time: an API v2 key (`sun_…`) goes to `v2`, a user JWT or legacy key to `v1`.
+ * When the command does not support the version of the credential, it fails
+ * before any request with `V2_KEY_NOT_SUPPORTED` or `V1_AUTH_NOT_SUPPORTED`.
+ */
+export interface ApiRoutes {
+  /** Internal service route: `<server>/<service><suffix>`. */
+  v1?: { service: ServiceName; suffix?: string; baseUrlOverride?: string };
+  /** API gateway route: `<gateway><prefix>` (e.g. `/api/v2/leadgen`). */
+  v2?: { prefix: string };
+}
+
+export interface ApiClient {
+  client: AxiosInstance;
+  api: 'v1' | 'v2';
+}
+
+export function createApiClient(routes: ApiRoutes, opts: ClientOptions): ApiClient {
+  const { server, token, profile } = resolveAuth(opts);
+  if (isV2Key(token)) {
+    if (!routes.v2) throw new CliError(V2_KEY_NOT_SUPPORTED_MESSAGE, 'V2_KEY_NOT_SUPPORTED');
+    const gateway = resolveGatewayUrl(server, profile.gatewayUrl);
+    return { client: buildClient(`${gateway.url}${routes.v2.prefix}`, token, opts.verbose), api: 'v2' };
+  }
+  if (!routes.v1) throw new CliError(V1_AUTH_NOT_SUPPORTED_MESSAGE, 'V1_AUTH_NOT_SUPPORTED');
+  const base = routes.v1.baseUrlOverride || getServiceUrl(server, routes.v1.service);
+  return { client: buildClient(`${base}${routes.v1.suffix ?? ''}`, token, opts.verbose), api: 'v1' };
+}
+
+/**
+ * Client for an internal service route (`<server>/<service>`), for commands
+ * that only exist in v1. Same as `createApiClient({ v1: { service } })`: an
+ * API v2 key is refused before any request with `V2_KEY_NOT_SUPPORTED`.
+ */
+export function createServiceClient(service: ServiceName, opts: ClientOptions): AxiosInstance {
+  return createApiClient({ v1: { service } }, opts).client;
+}
+
+/**
+ * Client for the API gateway, for commands that only exist in v2. Same as
+ * `createApiClient({ v2: { prefix } })`: a user JWT or legacy key is refused
+ * before any request with `V1_AUTH_NOT_SUPPORTED`.
+ */
+export function createGatewayClient(pathPrefix: string, opts: ClientOptions): AxiosInstance {
+  return createApiClient({ v2: { prefix: pathPrefix } }, opts).client;
+}
+
+function buildClient(baseURL: string, token: string, verbose?: boolean): AxiosInstance {
   const client = axios.create({
     baseURL,
     timeout: 30000,
@@ -42,7 +123,7 @@ export function createServiceClient(service: 'security' | 'solar' | 'templates' 
     },
   });
 
-  if (opts.verbose) {
+  if (verbose) {
     client.interceptors.request.use((req) => {
       process.stderr.write(`→ ${req.method?.toUpperCase()} ${req.baseURL}${req.url}\n`);
       if (req.data) process.stderr.write(`  Body: ${JSON.stringify(req.data).slice(0, 200)}\n`);
@@ -141,5 +222,6 @@ export function handleApiError(err: unknown): ApiError {
     error: true,
     status: 0,
     message: err instanceof Error ? err.message : String(err),
+    ...(err instanceof CliError ? { code: err.code } : {}),
   };
 }
