@@ -52,7 +52,11 @@ API v2 keys are stored hashed by the gateway, carry scopes (by default
 `leadgen:read`, `leadgen:write`, `credits:read`) and are really revoked when you
 delete them in Configuration. Any other command run with a `sun_` key stops
 before calling the API with a clear message (code `V2_KEY_NOT_SUPPORTED`): it
-still needs `suntropy auth login`. What is missing in the v2 for the rest of the
+still needs `suntropy auth login`. The other way round, a command that only
+exists in the v2 stops with `V1_AUTH_NOT_SUPPORTED` when run with a user
+session or a legacy key. Each command declares the APIs it supports and the
+CLI picks one per request from the credential (`createApiClient` in
+`src/client.ts`). What is missing in the v2 for the rest of the
 CLI is listed in [`docs/v2-gaps.md`](docs/v2-gaps.md).
 
 - `auth status` shows `credential: "sun_"` or `"jwt"`; for a `sun_` key it asks
