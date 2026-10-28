@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { matrix, type ParityCase, type PathCtx } from './cases.js';
+import { ID_KEYS, matrix, type ParityCase, type PathCtx } from './cases.js';
 import { diff, normalize, shape } from './normalize.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -84,7 +84,7 @@ function homeWith(server: string, token: string): string {
   return home;
 }
 
-type Status = 'OK' | 'FAIL' | 'SKIP' | 'V1_BUG';
+type Status = 'OK' | 'FAIL' | 'SKIP' | 'V1_BUG' | 'ENV';
 
 interface CaseReport {
   id: string;
@@ -94,6 +94,20 @@ interface CaseReport {
   v1?: { args: string[]; code: number | null; ms: number; stderr?: string };
   v2?: { args: string[]; code: number | null; ms: number; stderr?: string };
   diff?: string[];
+}
+
+const isEmpty = (v: unknown) =>
+  v === null || v === '' || (typeof v === 'object' && Object.keys(v as object).length === 0);
+
+/** Why the v2 error on stderr is not the one the ENV case expects, or undefined if it is. */
+function envMismatch(expected: { code?: string; status?: number; message?: string }, stderr: string): string | undefined {
+  const err = parseJson(stderr.trim());
+  if (!err.ok) return 'stderr is not JSON';
+  const e = err.value as { code?: unknown; status?: unknown; message?: unknown };
+  for (const k of ['code', 'status', 'message'] as const) {
+    if (expected[k] !== undefined && e[k] !== expected[k]) return `${k} ${JSON.stringify(e[k])} ≠ ${JSON.stringify(expected[k])}`;
+  }
+  return undefined;
 }
 
 function parseJson(s: string): { ok: true; value: unknown } | { ok: false } {
@@ -106,7 +120,8 @@ function parseJson(s: string): { ok: true; value: unknown } | { ok: false } {
 
 /** Placeholders for the values each path created, by the same name in both. */
 function idMap(ctx: PathCtx): Map<string, string> {
-  return new Map(Object.entries(ctx.ids).map(([k, v]) => [String(v), `<${k}>`]));
+  // An empty value (e.g. a form title that is "") is not an id.
+  return new Map(Object.entries(ctx.ids).filter(([, v]) => String(v) !== '').map(([k, v]) => [String(v), `<${k}>`]));
 }
 
 function compare(c: ParityCase, ctx1: PathCtx, ctx2: PathCtx, out1: unknown, out2: unknown): string[] {
@@ -119,10 +134,13 @@ function compare(c: ParityCase, ctx1: PathCtx, ctx2: PathCtx, out1: unknown, out
     }
     return bad;
   }
-  if (mode === 'shape') return diff(shape(out1), shape(out2));
+  if (mode === 'shape') {
+    // Keys only, but keyed by what each path created (surface uuids) under the same name.
+    return diff(shape(normalize(out1, { ids: idMap(ctx1), idKeys: ID_KEYS })), shape(normalize(out2, { ids: idMap(ctx2), idKeys: ID_KEYS })));
+  }
   const entity = mode === 'entity';
-  const n1 = normalize(out1, { ignore: c.ignore, dates: entity, ids: entity ? idMap(ctx1) : undefined, names: entity ? new Map([[ctx1.name, ctx1.shared]]) : undefined });
-  const n2 = normalize(out2, { ignore: c.ignore, dates: entity, ids: entity ? idMap(ctx2) : undefined, names: entity ? new Map([[ctx2.name, ctx2.shared]]) : undefined });
+  const n1 = normalize(out1, { ignore: c.ignore, dates: entity, ids: entity ? idMap(ctx1) : undefined, idKeys: ID_KEYS, names: entity ? new Map([[ctx1.name, ctx1.shared]]) : undefined });
+  const n2 = normalize(out2, { ignore: c.ignore, dates: entity, ids: entity ? idMap(ctx2) : undefined, idKeys: ID_KEYS, names: entity ? new Map([[ctx2.name, ctx2.shared]]) : undefined });
   return diff(n1, n2);
 }
 
@@ -143,8 +161,9 @@ async function main() {
     notifyUser: process.env.PARITY_NOTIFY_USER,
     customProfileId: process.env.PARITY_CUSTOM_PROFILE_ID,
     eredesZip: process.env.PARITY_EREDES_ZIP,
-    region: process.env.PARITY_REGION ?? 'Andalucía',
-    subRegion: process.env.PARITY_SUBREGION ?? 'Sevilla',
+    // The `name` of the region in periods (`/regions`), not its label («Andalucía»).
+    region: process.env.PARITY_REGION ?? 'andalucia',
+    subRegion: process.env.PARITY_SUBREGION ?? 'sevilla',
   };
   const ctx: Record<'v1' | 'v2', PathCtx> = {
     v1: { api: 'v1', run, name: `${shared}-v1`, shared, ids: {}, dir: mkdtempSync(join(tmpdir(), 'parity-v1-')), env },
@@ -192,9 +211,17 @@ async function main() {
       if (c.removes) cleanup[api].delete(c.removes);
     }
 
-    if (r1.code !== expected || r2.code !== expected) {
+    if (c.env && r1.code !== expected && r2.code !== expected) {
+      const mismatch = envMismatch(c.env.v2, r2.stderr);
+      report.status = mismatch ? 'FAIL' : 'ENV';
+      report.reason = mismatch ? `both fail, but the v2 error is not the expected one (${mismatch})` : c.env.cause;
+    } else if (r1.code !== expected || r2.code !== expected) {
       report.status = c.knownV1Bug && r1.code !== expected && r2.code === expected ? 'V1_BUG' : 'FAIL';
       report.reason = c.knownV1Bug && report.status === 'V1_BUG' ? c.knownV1Bug : `exit codes v1=${r1.code} v2=${r2.code}, expected ${expected}`;
+    } else if (c.knownV1Bug && expected === 0 && p1.ok && isEmpty(p1.value) && p2.ok && !isEmpty(p2.value)) {
+      // The v1 answers 200 with nothing (e.g. C10: it looks the form up by Origin).
+      report.status = 'V1_BUG';
+      report.reason = c.knownV1Bug;
     } else if (expected === 0 && (c.compare ?? 'entity') !== 'exit') {
       if (!p1.ok || !p2.ok) {
         report.status = 'FAIL';
@@ -225,7 +252,7 @@ async function main() {
     server: opts.server,
     gateway: process.env.SUNTROPY_GATEWAY_URL ?? null,
     finishedAt: new Date().toISOString(),
-    counts: Object.fromEntries((['OK', 'FAIL', 'V1_BUG', 'SKIP'] as Status[]).map((s) => [s, reports.filter((r) => r.status === s).length])),
+    counts: Object.fromEntries((['OK', 'FAIL', 'ENV', 'V1_BUG', 'SKIP'] as Status[]).map((s) => [s, reports.filter((r) => r.status === s).length])),
     notDeletable: `manufacturers, studies and shareables have no delete command: they stay named ${shared}-v1/-v2 (studies: ${shared}).`,
     cleanup: leftovers,
     ids: { v1: ctx.v1.ids, v2: ctx.v2.ids },

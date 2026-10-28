@@ -4,7 +4,7 @@
  * `parity-<run>-v1` / `parity-<run>-v2`, and the cases run in order:
  * create → read → update → delete. What is left is deleted at the end.
  */
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface PathCtx {
@@ -54,8 +54,15 @@ export interface ParityCase {
   removes?: string;
   /** Extra keys to ignore in the comparison. */
   ignore?: string[];
-  /** A v1 bug the contract documents: v1 failing and v2 working is reported as V1_BUG, not FAIL. */
+  /** A v1 bug the contract documents: v1 failing (or printing nothing) and v2 working is reported as V1_BUG, not FAIL. */
   knownV1Bug?: string;
+  /**
+   * Both paths fail for the same cause outside the CLI and the API (a service
+   * or a key missing in the local environment). When both exit non-zero and
+   * the v2 error matches `v2`, the case is ENV, not FAIL. If only one path
+   * fails, or the v2 error is another one, it stays FAIL.
+   */
+  env?: { cause: string; v2: { code?: string; status?: number; message?: string } };
   /** Runs before the command on each path (local files). */
   before?: (c: PathCtx) => void;
   /** Why the case is not run (destructive on tenant settings, etc.). */
@@ -65,6 +72,13 @@ export interface ParityCase {
 const j = (v: unknown) => JSON.stringify(v);
 const need = (c: PathCtx, ...keys: string[]) => keys.every((k) => c.ids[k] !== undefined);
 const studyFile = (c: PathCtx) => join(c.dir, 'study.json');
+const readStudy = (c: PathCtx): any => {
+  try {
+    return JSON.parse(readFileSync(studyFile(c), 'utf-8'));
+  } catch {
+    return undefined;
+  }
+};
 
 /** Inventory resources driven by the factory (list/get/create/update/delete/delete-batch/filter). */
 interface Res {
@@ -130,6 +144,27 @@ const RES: Res[] = [
   },
 ];
 
+/**
+ * Keys whose numeric value may be an id this run created. Only these are
+ * normalised to `<name>`: a tariff `idTarifaATR` of 14 is not the kit 14.
+ */
+export const ID_KEYS = new Set([
+  ...RES.map((r) => r.idField),
+  'id',
+  'idManufacturer',
+  'idCustomField',
+  'idCustomAssetType',
+  'customAssetTypeId',
+  'idKitSolarPanel',
+  'idKitInverter',
+  'idKitBattery',
+  'idSolarKit',
+  'idSolarStudyMetadata',
+  'idSolarKitCustomAsset',
+  'projectId',
+  'fileId',
+]);
+
 function createCases(): ParityCase[] {
   const out: ParityCase[] = [
     {
@@ -166,7 +201,8 @@ function createCases(): ParityCase[] {
       const idField = { panels: 'idKitSolarPanel', inverters: 'idKitInverter', batteries: 'idKitBattery' }[name];
       const body = {
         panels: { peakPower: 450, efficiency: 21, width: 1134, heigth: 1722, costPerUnit: 100 },
-        inverters: { nominalPower: 5000, efficiency: 97, phaseNumber: 'single_phase', costPerUnit: 800 },
+        // KitInverter has no phaseNumber column (v1 dropped it silently, v2 answers UNKNOWN_FIELD).
+        inverters: { nominalPower: 5000, efficiency: 97, costPerUnit: 800 },
         batteries: { capacity: 5, costPerUnit: 2500 },
       }[name];
       return {
@@ -185,7 +221,10 @@ function createCases(): ParityCase[] {
           '--battery', c.ids.battery, '--batteries-count', '1', '--peak-power', '5.4', '--price', '6500', '--custom-asset', `${c.ids.asset}:2`,
         ] || undefined,
       compare: 'entity',
-      capture: (o, c) => (c.ids.kit = String(o.idSolarKit)),
+      capture: (o, c) => {
+        c.ids.kit = String(o.idSolarKit);
+        if (o.solarKitCustomAssets?.[0]?.idSolarKitCustomAsset) c.ids.kitLink = String(o.solarKitCustomAssets[0].idSolarKitCustomAsset);
+      },
       cleanup: { key: 'kits:kit', args: (c) => (c.ids.kit ? ['inventory', 'kits', 'delete', c.ids.kit] : undefined) },
     },
     {
@@ -216,13 +255,30 @@ function createCases(): ParityCase[] {
     { id: 'studies set tariff', args: (c) => ['studies', 'set', 'tariff', '--file', studyFile(c), '--tariff-id', '13', '--zone-id', '1'], compare: 'raw', ignore: ['file'] },
     { id: 'studies set prices (local)', args: (c) => ['studies', 'set', 'prices', '--file', studyFile(c), '--energy', j({ p1: 0.15, p2: 0.1, p3: 0.07 })], compare: 'exit' },
     { id: 'studies set consumption --annual --pattern', args: (c) => ['studies', 'set', 'consumption', '--file', studyFile(c), '--annual', '4000', '--pattern', 'Balance', '--tariff', '2.0TD'], compare: 'raw', ignore: ['file'] },
-    { id: 'studies set consumption --monthly (REE profiles)', args: (c) => ['studies', 'set', 'consumption', '--file', studyFile(c), '--monthly', j(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, 330]))), '--tariff', '2.0TD'], compare: 'raw', ignore: ['file'] },
-    { id: 'studies add surface (local)', args: (c) => ['studies', 'add', 'surface', '--file', studyFile(c), '--lat', '37.39', '--lon', '-5.99', '--power', '5000'], compare: 'exit' },
+    {
+      id: 'studies set consumption --monthly (REE profiles)',
+      args: (c) => ['studies', 'set', 'consumption', '--file', studyFile(c), '--monthly', j(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, 330]))), '--tariff', '2.0TD'],
+      compare: 'raw',
+      ignore: ['file'],
+      env: { cause: 'profiles local sin perfiles REE de 2026: la curva de consumo del estudio sale vacía en los dos caminos (en dev y prod hay datos del año en curso)', v2: { message: 'Failed to fetch REE profiles' } },
+    },
+    // Flat (coplanar, --angle 0): the account's single-phase kits are all coplanar, so
+    // `optimize-peakpower --use-kits` has kits to evaluate (with 30° both paths found none).
+    {
+      id: 'studies add surface (local)',
+      args: (c) => ['studies', 'add', 'surface', '--file', studyFile(c), '--lat', '37.39', '--lon', '-5.99', '--power', '5000', '--angle', '0'],
+      compare: 'exit',
+      // Each path's surface gets a random uuid.
+      capture: (_o, c) => {
+        const surface = readStudy(c)?.surfaces?.[0]?.surfaceId;
+        if (surface) c.ids.surface = String(surface);
+      },
+    },
     { id: 'studies set panel', args: (c) => need(c, 'panel') && ['studies', 'set', 'panel', '--file', studyFile(c), '--panel-id', c.ids.panel, '--panels-count', '12'] || undefined, compare: 'raw', ignore: ['file'] },
     { id: 'studies set inverter', args: (c) => need(c, 'inverter') && ['studies', 'set', 'inverter', '--file', studyFile(c), '--inverter-id', c.ids.inverter] || undefined, compare: 'raw', ignore: ['file'] },
     { id: 'studies set custom-assets', args: (c) => need(c, 'asset') && ['studies', 'set', 'custom-assets', '--file', studyFile(c), '--asset', `${c.ids.asset}:2`] || undefined, compare: 'raw', ignore: ['file'] },
     { id: 'studies calculate production', args: (c) => ['studies', 'calculate', 'production', '--file', studyFile(c), '--all-surfaces'], compare: 'raw', ignore: ['file'] },
-    { id: 'studies calculate-results', args: (c) => ['studies', 'calculate-results', '--file', studyFile(c)], compare: 'shape' },
+    { id: 'studies calculate-results', args: (c) => ['studies', 'calculate-results', '--file', studyFile(c)], compare: 'shape', env: { cause: 'profiles local sin perfiles REE de 2026: la curva de consumo del estudio sale vacía en los dos caminos (en dev y prod hay datos del año en curso)', v2: { message: 'No consumption curve. Use: studies set consumption' } } },
     { id: 'studies optimize-peakpower --use-kits', args: (c) => ['studies', 'optimize-peakpower', '--file', studyFile(c), '--use-kits'], compare: 'shape' },
     { id: 'studies set kit', args: (c) => need(c, 'kit') && ['studies', 'set', 'kit', '--file', studyFile(c), '--kit-id', c.ids.kit] || undefined, compare: 'raw', ignore: ['file'] },
     {
@@ -291,7 +347,7 @@ function readCases(): ParityCase[] {
       id: 'shareables create',
       args: (c) => need(c, 'study') && ['shareables', 'create', '--element-id', c.ids.study, '--name', c.name, '--link-params', 'utm_source=parity'] || undefined,
       compare: 'entity',
-      ignore: ['uid', 'url', 'idShareable', 'elementId', 'expirationDate', 'activationDate'],
+      ignore: ['uid', 'url', 'idShareable', 'shareableDataId', 'elementId', 'expirationDate', 'activationDate'],
     },
 
     {
@@ -303,18 +359,40 @@ function readCases(): ParityCase[] {
       },
     },
     { id: 'ppa templates get', args: (c) => need(c, 'ppaTemplate') && ['ppa', 'templates', 'get', c.ids.ppaTemplate] || undefined, compare: 'raw' },
-    { id: 'ppa calculate --study', args: (c) => need(c, 'study') && ['ppa', 'calculate', '--study', c.ids.study] || undefined, compare: 'entity' },
+    {
+      id: 'ppa calculate --study',
+      args: (c) => need(c, 'study') && ['ppa', 'calculate', '--study', c.ids.study] || undefined,
+      compare: 'entity',
+      // calculatePPAOnSolarStudy reads consumption.days[0].date: TypeError in both paths.
+      env: { cause: 'profiles local sin perfiles REE de 2026: la curva de consumo del estudio sale vacía en los dos caminos (en dev y prod hay datos del año en curso)', v2: { code: 'UPSTREAM_ERROR', status: 500 } },
+    },
 
     { id: 'consumption estimate', args: () => ['consumption', 'estimate', '--annual', '5000', '--pattern', 'Domestic', '--tariff', '2.0TD', '--start-date', '2025-01-01', '--end-date', '2025-12-31'], compare: 'raw' },
-    { id: 'consumption estimate --monthly-data', args: () => ['consumption', 'estimate', '--annual', '3600', '--monthly-data', j(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, 300]))), '--start-date', '2025-01-01', '--end-date', '2025-12-31'], compare: 'raw' },
+    {
+      id: 'consumption estimate --monthly-data',
+      args: () => ['consumption', 'estimate', '--annual', '3600', '--monthly-data', j(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, 300]))), '--start-date', '2025-01-01', '--end-date', '2025-12-31'],
+      compare: 'raw',
+      env: {
+        cause: 'profiles: sin --pattern no llega consumptionType y calculatedProfile lee DayDistributionTypes[undefined] (TypeError, 500) en los dos caminos; fallo del servicio profiles, no de v1/v2',
+        v2: { code: 'UPSTREAM_UNAVAILABLE', status: 502 },
+      },
+    },
+    { id: 'consumption estimate --monthly-data --pattern', args: () => ['consumption', 'estimate', '--annual', '3600', '--pattern', 'Domestic', '--monthly-data', j(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, 300]))), '--start-date', '2025-01-01', '--end-date', '2025-12-31'], compare: 'raw' },
     { id: 'consumption ree-profiles', args: () => ['consumption', 'ree-profiles', '--start', '2025-01-01', '--end', '2025-01-31', '--tariff', '2.0TD'], compare: 'raw' },
     { id: 'consumption periods', args: () => ['consumption', 'periods', '--tariff-id', '13', '--zone-id', '1', '--start', '2025-01-01', '--end', '2025-01-31'], compare: 'raw' },
-    { id: 'consumption periods --market pt', args: () => ['consumption', 'periods', '--tariff-id', '13', '--zone-id', '1', '--start', '2025-01-01', '--end', '2025-01-31', '--market', 'pt'], compare: 'raw' },
+    // 26 = BTN-3, a Portuguese tariff (13 is the Spanish 2.0TD: periods fails with it for pt in both paths).
+    { id: 'consumption periods --market pt', args: () => ['consumption', 'periods', '--tariff-id', '26', '--zone-id', '1', '--start', '2025-01-01', '--end', '2025-01-31', '--market', 'pt'], compare: 'raw' },
     { id: 'consumption custom-tags', args: () => ['consumption', 'custom-tags'], compare: 'raw' },
     { id: 'consumption custom-profile-info', args: (c) => c.env.customProfileId && ['consumption', 'custom-profile-info', '--id', c.env.customProfileId] || undefined, compare: 'raw' },
     { id: 'consumption from-file --eredes-zip', args: (c) => c.env.eredesZip && ['consumption', 'from-file', '--eredes-zip', c.env.eredesZip] || undefined, compare: 'raw' },
 
-    { id: 'notifications send', args: (c) => c.env.notifyUser && ['notifications', 'send', '--to-user', c.env.notifyUser, '--title', 'Parity', '--message', `parity ${c.shared}`, '--as-alexandria'] || undefined, compare: 'entity', ignore: ['notificationId'] },
+    {
+      id: 'notifications send',
+      args: (c) => c.env.notifyUser && ['notifications', 'send', '--to-user', c.env.notifyUser, '--title', 'Parity', '--message', `parity ${c.shared}`, '--as-alexandria'] || undefined,
+      compare: 'entity',
+      ignore: ['notificationId'],
+      env: { cause: 'mailing (:8092) no se arranca en local: notifications responde 500 (ECONNREFUSED) en los dos caminos', v2: { code: 'UPSTREAM_UNAVAILABLE', status: 502 } },
+    },
 
     {
       id: 'config theme get',
@@ -338,12 +416,13 @@ function readCases(): ParityCase[] {
       (s): ParityCase => ({ id: `config solarform advanced ${s} get`, args: () => ['config', 'solarform', 'advanced', s, 'get'], compare: 'raw' }),
     ),
     { id: 'solarform config (public view)', args: () => ['solarform', 'config'], compare: 'raw', knownV1Bug: 'C10: the v1 route resolves the form by Origin, which the CLI does not send' },
-    { id: 'solarform simple', args: (c) => ['solarform', 'simple', '--region', c.env.region, '--sub-region', c.env.subRegion, '--consumption', '400'], compare: 'entity', ignore: ['id', '_id'] },
+    // Each request generates the surface uuid, like `id`/`_id`.
+    { id: 'solarform simple', args: (c) => ['solarform', 'simple', '--region', c.env.region, '--sub-region', c.env.subRegion, '--consumption', '400'], compare: 'entity', ignore: ['id', '_id', 'surfaceId'] },
     {
       id: 'solarform calculate',
       args: () => ['solarform', 'calculate', '--data', j({ center: { lat: 37.39, lng: -5.99 }, consumptionMode: 'consumptionPatterns', locationMode: 'locationOnly', selectedConsumptionPattern: 'Balance', consumptionQuantity: 400, consumptionQuantityIntroductionMode: 'monthlyConsumption' })],
       compare: 'entity',
-      ignore: ['id', '_id'],
+      ignore: ['id', '_id', 'surfaceId'],
     },
 
     { id: 'projects list', args: () => ['projects', 'list'], compare: 'raw', knownV1Bug: undefined },
@@ -352,8 +431,8 @@ function readCases(): ParityCase[] {
 
     { id: 'templates list', args: () => ['templates', 'list'], compare: 'raw' },
     { id: 'templates list --type generic', args: () => ['templates', 'list', '--type', 'generic'], compare: 'raw' },
-    { id: 'geocode resolve', args: () => ['geocode', 'resolve', '--address', 'Avenida de la Constitución 1, Sevilla', '--country', 'es'], compare: 'raw' },
-    { id: 'geocode reverse', args: () => ['geocode', 'reverse', '--lat', '37.3861', '--lng', '-5.9926'], compare: 'raw' },
+    { id: 'geocode resolve', args: () => ['geocode', 'resolve', '--address', 'Avenida de la Constitución 1, Sevilla', '--country', 'es'], compare: 'raw', env: { cause: 'sin GOOGLE_GEOCODING_API_KEY ni GOOGLE_SOLAR_API_KEY en el Solar local: los dos caminos fallan con MISSING_API_KEY', v2: { code: 'MISSING_API_KEY', status: 500 } } },
+    { id: 'geocode reverse', args: () => ['geocode', 'reverse', '--lat', '37.3861', '--lng', '-5.9926'], compare: 'raw', env: { cause: 'sin GOOGLE_GEOCODING_API_KEY ni GOOGLE_SOLAR_API_KEY en el Solar local: los dos caminos fallan con MISSING_API_KEY', v2: { code: 'MISSING_API_KEY', status: 500 } } },
 
     // LeadGen and credits (already v1/v2 since #47): read-only, no real purchase.
     { id: 'satvolt credits balance', args: () => ['satvolt', 'credits', 'balance'], compare: 'raw' },
@@ -361,6 +440,7 @@ function readCases(): ParityCase[] {
       id: 'satvolt credits packs',
       args: () => ['satvolt', 'credits', 'packs'],
       compare: 'raw',
+      env: { cause: 'payments (:8098, Stripe) no se arranca en local: la v1 no conecta y el gateway no tiene PAYMENTS_URL', v2: { code: 'UPSTREAM_NOT_CONFIGURED', status: 503 } },
       capture: (o, c) => {
         const packs = Array.isArray(o) ? o : o?.packs ?? o?.data;
         if (Array.isArray(packs) && packs[0]?.id) c.ids.creditPack = packs[0].id;
@@ -375,9 +455,12 @@ function readCases(): ParityCase[] {
 }
 
 function updateCases(): ParityCase[] {
+  // A column each entity has: asset types have no costPerUnit, device kits use price.
+  const updateBody = (r: Res, c: PathCtx): Record<string, unknown> =>
+    r.name === 'custom-asset-types' ? { label: `${c.name}-x` } : r.name.endsWith('-kits') ? { price: 42 } : { costPerUnit: 42 };
   const out: ParityCase[] = RES.map((r) => ({
     id: `inventory ${r.name} update`,
-    args: (c: PathCtx) => need(c, r.key) && ['inventory', r.name, 'update', c.ids[r.key], '--data', j({ costPerUnit: 42 })] || undefined,
+    args: (c: PathCtx) => need(c, r.key) && ['inventory', r.name, 'update', c.ids[r.key], '--data', j(updateBody(r, c))] || undefined,
     compare: 'entity' as const,
   }));
   out.push(

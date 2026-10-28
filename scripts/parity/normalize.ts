@@ -28,6 +28,8 @@ export interface NormalizeOptions {
   dates?: boolean;
   /** Extra keys to drop for this case. */
   ignore?: string[];
+  /** Keys whose numeric value is mapped through `ids` (default: keys that look like ids). */
+  idKeys?: Set<string>;
 }
 
 export function normalize(value: unknown, opts: NormalizeOptions = {}, key = ''): unknown {
@@ -39,7 +41,9 @@ export function normalize(value: unknown, opts: NormalizeOptions = {}, key = '')
       if (DROPPED_KEYS.has(k) || opts.ignore?.includes(k)) continue;
       // §1.8.3: the security `client` record of the theme is internal.
       if (k === 'client' && 'idClientThemeConfig' in obj) continue;
-      out[k] = normalize(obj[k], opts, k);
+      // A key that is an id this path created (a surface uuid keying a log);
+      // numeric keys are hours, months… never ids.
+      out[(!/^\d+$/.test(k) && opts.ids?.get(k)) || k] = normalize(obj[k], opts, k);
     }
     return out;
   }
@@ -50,7 +54,10 @@ export function normalize(value: unknown, opts: NormalizeOptions = {}, key = '')
     if (opts.ids?.has(s)) return opts.ids.get(s);
     return s;
   }
-  if (typeof value === 'number' && opts.ids?.has(String(value)) && /(^id|Id$|^id$|_id$)/.test(key)) {
+  // Epoch-millisecond moments (`lastStateUpdateMomentMS`): a date, like the ISO ones.
+  if (opts.dates && typeof value === 'number' && /MomentMS$/.test(key)) return '<date>';
+  const isIdKey = opts.idKeys ? opts.idKeys.has(key) : /(^id|Id$|^id$|_id$)/.test(key);
+  if (typeof value === 'number' && opts.ids?.has(String(value)) && isIdKey) {
     return opts.ids.get(String(value));
   }
   return value;

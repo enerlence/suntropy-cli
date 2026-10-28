@@ -13,7 +13,7 @@ Ejecuta todos los comandos de la CLI dos veces contra un backend real: una con u
 | `PARITY_NOTIFY_USER` | No | `userUID` de una persona de la cuenta para `notifications send`. Sin ella, el caso se salta. |
 | `PARITY_CUSTOM_PROFILE_ID` | No | Id de un perfil de consumo personalizado (`consumption custom-profile-info`). |
 | `PARITY_EREDES_ZIP` | No | Ruta a un ZIP de E-Redes (`consumption from-file`). |
-| `PARITY_REGION`, `PARITY_SUBREGION` | No | Región para `solarform simple` (por defecto, Andalucía / Sevilla). |
+| `PARITY_REGION`, `PARITY_SUBREGION` | No | Región para `solarform simple`: el `name` de periods, no la etiqueta (por defecto, `andalucia` / `sevilla`). |
 | `PARITY_STUDY_STATE` | No | Nombre de un estado de estudio para `studies list --state` (por defecto, `Pendiente`). |
 | `--out <dir>` | No | Carpeta del informe (por defecto, `./parity-out`). |
 | `--only <regex>` | No | Sólo los casos cuyo id coincide. Ojo: los casos dependen de los anteriores (crear → leer…), así que filtrar puede dejar casos en `SKIP`. |
@@ -32,7 +32,7 @@ export SUNTROPY_GATEWAY_URL=http://localhost:8087
 npm run parity -- --server http://localhost --out ./parity-out
 ```
 
-Sale con código 0 si no hay ningún `FAIL`.
+Sale con código 0 si no hay ningún `FAIL` (los `ENV` no cuentan).
 
 ## Qué hace
 
@@ -49,7 +49,7 @@ Cada caso declara su comparación:
 
 | Modo | Para | Qué se normaliza |
 |---|---|---|
-| `entity` | Lo que crea o lee un camino | Los ids que ha creado cada camino pasan a `<nombre>` (`<panel>`, `<kit>`…), `parity-<run>-v1|v2` pasa a `parity-<run>`, las fechas ISO a `<date>`, y se quitan las diferencias permitidas de §1.8. |
+| `entity` | Lo que crea o lee un camino | Los ids que ha creado cada camino pasan a `<nombre>` (`<panel>`, `<kit>`, `<surface>`…), `parity-<run>-v1|v2` pasa a `parity-<run>`, las fechas ISO y los instantes en milisegundos (`…MomentMS`) a `<date>`, y se quitan las diferencias permitidas de §1.8. |
 | `raw` | Listados y lecturas de la cuenta, que los dos caminos ven igual | Sólo se quitan las diferencias permitidas de §1.8. |
 | `shape` | `calculate-production`, `calculate-results`, `optimize-peakpower` | Sólo claves y tipos (§1.8.6: los números de la producción cambian hasta que A5 esté desplegado). |
 | `exit` | Pasos locales y lecturas tras un borrado | Sólo el código de salida. |
@@ -66,7 +66,16 @@ Estados:
 
 - `OK`: misma salida (tras normalizar) y mismo código de salida.
 - `FAIL`: códigos de salida distintos o JSON distinto.
-- `V1_BUG`: la v1 falla por un fallo que el contrato documenta (§0.1: `custom-assets filter`, `custom-asset-types filter`, `heatpump-kits list`, `solarform config` sin `Origin`) y la v2 funciona.
+- `V1_BUG`: la v1 falla (o responde vacío) por un fallo que el contrato documenta (§0.1: `custom-assets filter`, `custom-asset-types filter`, `heatpump-kits list`; C10: `solarform config` sin `Origin`) y la v2 funciona.
+- `ENV`: los dos caminos fallan por la misma causa ajena a la CLI y a la API, y la v2 da el error esperado (`code`, `status` o `message` del caso). No cuenta como `FAIL`. Si sólo falla un camino, o la v2 da otro error, es `FAIL`. Cada caso declara su causa en `env.cause` y sale en el informe. Los de hoy, en local:
+
+  | Caso | Causa | Error v2 esperado |
+  |---|---|---|
+  | `studies set consumption --monthly`, `studies calculate-results`, `ppa calculate --study` | profiles local no tiene perfiles REE de 2026 (año en curso, que la CLI usa fijo): la curva de consumo sale vacía | mensaje de la CLI / `UPSTREAM_ERROR` 500 |
+  | `consumption estimate --monthly-data` (sin `--pattern`) | fallo de profiles: sin `consumptionType` lee `DayDistributionTypes[undefined]` (500). Con `--pattern` funciona y se compara en otro caso | `UPSTREAM_UNAVAILABLE` 502 |
+  | `notifications send` | mailing (:8092) no se arranca: notifications responde 500 | `UPSTREAM_UNAVAILABLE` 502 |
+  | `geocode resolve` y `reverse` | sin claves de Google en el Solar local | `MISSING_API_KEY` 500 |
+  | `satvolt credits packs` | payments (Stripe) no se arranca | `UPSTREAM_NOT_CONFIGURED` 503 |
 - `SKIP`: el caso no se ejecuta (falta un dato de un caso anterior o una variable, o se salta a propósito).
 
 ## Añadir un caso
