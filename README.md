@@ -404,11 +404,11 @@ JSON arguments (`--steps`, `--config`, `--data`, `--columns`, `--polygon`) accep
 inline JSON, `@file.json` or `-` for stdin. Errors keep the API `code` and
 validation `details` (step index, uid and field). `reset` and `delete` are in the
 `delete` permission tier; `start`, `resume`, `run`, `run-step`, `extend`, `patch`
-and `duplicate` are `write`. Skills: [`satvolt-cli`](skills/satvolt-cli.md)
-(command reference), [`satvolt-api`](skills/satvolt-api.md) (HTTP API) and the
-workflows [`satvolt-campaign`](skills/satvolt-campaign.md),
-[`satvolt-probe-to-full-campaign`](skills/satvolt-probe-to-full-campaign.md) and
-[`satvolt-lead-troubleshooting`](skills/satvolt-lead-troubleshooting.md).
+and `duplicate` are `write`. Skills: [`satvolt-cli`](https://github.com/enerlence/suntropy-cli-skills/blob/main/skills/satvolt-cli.md)
+(command reference), [`satvolt-api`](https://github.com/enerlence/suntropy-cli-skills/blob/main/skills/satvolt-api.md) (HTTP API) and the
+workflows [`satvolt-campaign`](https://github.com/enerlence/suntropy-cli-skills/blob/main/skills/satvolt-campaign.md),
+[`satvolt-probe-to-full-campaign`](https://github.com/enerlence/suntropy-cli-skills/blob/main/skills/satvolt-probe-to-full-campaign.md) and
+[`satvolt-lead-troubleshooting`](https://github.com/enerlence/suntropy-cli-skills/blob/main/skills/satvolt-lead-troubleshooting.md).
 
 ### `suntropy config` - Configuration
 
@@ -446,7 +446,9 @@ Local development uses port-based routing: solar=8086, security=8080, profiles=8
 
 ## Skills
 
-Agent skills (prompt templates) are available in the [`suntropy-cli-skills`](https://github.com/enerlence/suntropy-cli-skills) repo. Install them in your `.claude/skills/` or `.agents/skills/` directory to give AI agents knowledge of the CLI workflows.
+Agent skills (prompt templates) live in the [`suntropy-cli-skills`](https://github.com/enerlence/suntropy-cli-skills) repo, the single source. The npm package ships a copy taken from there at publish time, in `$(npm root -g)/@enerlence/suntropy-cli/skills` (`skills/.origen` says which ref). Install them in your `.claude/skills/` or `.agents/skills/` directory to give AI agents knowledge of the CLI workflows; for the very latest, clone the repo.
+
+This repo keeps no copy of its own: `npm run skills:sync` downloads them (`--ref <branch>` or `--from <folder>` for unmerged changes) and `npm run skills:check` fails if a `suntropy satvolt` subcommand is missing from `satvolt-cli.md`. Both run in `prepublishOnly` and in CI.
 
 Available skills:
 - **suntropy-cli** - Complete CLI reference
@@ -457,4 +459,5 @@ Available skills:
 - **satvolt-api** - Satvolt public HTTP API (`/satvolt/api/v1`)
 - **satvolt-campaign** - Create, configure, follow and export Satvolt campaigns
 - **satvolt-probe-to-full-campaign** - Probe campaign from a template, validate, fix and extend to the whole area
+- **satvolt-france** - Campaigns in France (SIRET/NAF registry and real site consumption)
 - **satvolt-lead-troubleshooting** - Diagnose failing steps and re-run them on leads

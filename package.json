@@ -14,7 +14,9 @@
     "build": "tsup",
     "dev": "tsx bin/suntropy.ts",
     "start": "node dist/bin/suntropy.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build && npm run skills:sync && npm run skills:check",
+    "skills:sync": "node scripts/sync-skills.mjs",
+    "skills:check": "node scripts/check-skills.mjs"
   },
   "keywords": [
     "suntropy",
