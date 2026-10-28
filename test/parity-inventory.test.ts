@@ -37,7 +37,7 @@ function writeBodies(cfg: ResourceConfig): { v1: any; v2: any } {
         v2: { price: 7000, kitSolarPanelId: 11, kitInverterId: 21, batteryId: 3, kitCategoryIds: [2], customAssets: [{ customAssetId: 9, units: 4 }] },
       };
     default:
-      return { v1: { name: 'New', costPerUnit: 1 }, v2: { name: 'New', costPerUnit: 1 } };
+      return { v1: { name: 'New', costPerUnit: 1, manufacturer: { idManufacturer: 7 } }, v2: { name: 'New', costPerUnit: 1, manufacturerId: 7 } };
   }
 }
 
@@ -341,11 +341,11 @@ for (const [name, v1Base, v2Res, idField] of [
     },
     {
       name: `inventory kits ${name} create`,
-      args: ['inventory', 'kits', name, 'create', '--data', '{"name":"X"}'],
+      args: ['inventory', 'kits', name, 'create', '--data', '{"name":"X","manufacturer":{"idManufacturer":7}}'],
       v1: { [`POST /solar${v1Base}`]: items[0] },
       v2: { [`POST /api/v2/inventory/${v2Res}`]: { status: 201, body: env(items[0]) } },
-      expectV1: [{ method: 'POST', path: `/solar${v1Base}`, body: { name: 'X' } }],
-      expectV2: [{ method: 'POST', path: `/api/v2/inventory/${v2Res}`, body: { name: 'X' } }],
+      expectV1: [{ method: 'POST', path: `/solar${v1Base}`, body: { name: 'X', manufacturer: { idManufacturer: 7 } } }],
+      expectV2: [{ method: 'POST', path: `/api/v2/inventory/${v2Res}`, body: { name: 'X', manufacturerId: 7 } }],
     },
     {
       name: `inventory kits ${name} delete`,

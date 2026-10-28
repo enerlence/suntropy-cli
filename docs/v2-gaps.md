@@ -1,308 +1,157 @@
-# CLI → API v2: inventario de llamadas y huecos (brief de la fase 2)
+# CLI → API v2: qué ruta usa cada comando
 
-## Propósito
+Estado final de la fase 2 (paridad v1 ↔ v2). Cada comando declara su ruta en las dos versiones y la CLI elige en cada petición según la credencial:
 
-Hoy la CLI (`@enerlence/suntropy-cli`) llama a las rutas **internas** de cada microservicio con un JWT de usuario o una API key antigua. Los clientes se construyen con `createServiceClient(service, opts)` (`src/client.ts`). La URL base es `<server>/<service>` (`security`, `solar`, `templates`, `profiles`, `periods`, `notifications`). En local (`localhost` o `host:puerto`) se sustituye por un puerto por servicio (`LOCAL_PORTS` en `src/config.ts`).
+- **clave `sun_`** → API v2, `<gateway>/api/v2/…`;
+- **JWT o API key antigua** → v1, `<server>/<servicio>/…` (en local, un puerto por servicio: `LOCAL_PORTS` de `src/config.ts`).
 
-En esta PR sólo funcionan con una clave v2 (`sun_…`):
+Si el comando no tiene ruta para la versión de la credencial, falla antes de llamar con `V2_KEY_NOT_SUPPORTED` o `V1_AUTH_NOT_SUPPORTED`.
 
-- `satvolt *`: `/api/v2/leadgen/<ruta>` → Satvolt `/api/v1/<ruta>`, más `GET /api/v2/leadgen/credit-packs` y `POST /api/v2/leadgen/credit-packs/:packId/checkout` → payments.
-- `auth status`: `GET /api/v2/me`.
+El código está en `src/api/`:
 
-El resto de comandos rechaza una clave `sun_` con un mensaje claro. Este documento recoge **todas** las llamadas HTTP que hace la CLI fuera de `src/commands/satvolt/` y `src/commands/auth.ts`. Para cada una indica si existe un equivalente en el catálogo v2 (`suntropy-api-gateway/src/routes.js`).
+- `core.ts`: `operation({ v1, v2 })`, `invoke(op, opts, input)` y los constructores `v1(…)`, `v2(…)` y `custom(…)`;
+- `translate.ts`: traducciones comunes (desenvolver `data`, `v2Range`/`v2All` para paginar, borrados, referencias `{ idX }` → `xId`, `identifier` ↔ `name`, `clientId` del JWT);
+- `ops/studies.ts`, `ops/reference.ts`, `ops/inventory.ts` y `ops/settings.ts`: las rutas por dominio. `ops/index.ts` (`allOperations()`) las lista todas: 138 operaciones, 135 con v1 y v2 y 3 sólo v1.
 
-Diferencias de contrato que afectan a cualquier migración:
+Las rutas v1 son relativas al servicio; las v2, a `/api/v2`. El contrato de referencia es `contrato-v2-paridad-cli.md` (fase 1); los números de fila (A1, B-7, C13…) son los suyos.
 
-- **Envoltorio**: la v2 responde `{ data, pagination?, warning?, requestId }`. Los errores llegan como `{ error: { code, message }, requestId }`.
-- **Paginación**: los listados nativos usan **`limit` (1–100, 25 por defecto) / `offset`**. Devuelven `pagination: { limit, offset, total, hasMore, nextOffset }`. Sólo `/management/requests` usa cursor. La CLI hoy espera la tupla `[items[], total]`, `{ data, total }` o un array (`factory.ts`, `studies list`). Hay que adaptar el parser y `outputPaginated`.
-- **Nombres de recurso distintos**: `solar-panels` → `panels`, `solar-inverter` → `inverters`, `heat-pump` → `heat-pumps`, `solar-kits/solar-panels` → `kit-panels`, etc. Los campos de los recursos nativos también pueden cambiar.
-- **Escrituras distintas**: la v2 usa `PATCH /:id` parcial en lugar de `PUT` (ni por id ni con el id en el body), y `DELETE` responde 204.
-- **Salida JSON**: la salida `--format json` que consumen Alexandria y las skills cambiaría de forma. Hay que decidir si la CLI desenvuelve `data` y normaliza los campos, o si se versiona la salida y se actualizan las skills.
+## Reglas comunes de traducción (§3.0)
 
-Leyenda de la columna «Equivalente v2»:
+| Regla | Qué hace la CLI |
+|---|---|
+| Sobre | Con la v2 desenvuelve `data`. Los errores v2 salen por stderr con `code`, `message`, `status` y, en 4xx, `details`. Stdout queda vacío. |
+| Listados paginados | `outputPaginated` imprime `{ data, total, limit, offset, hasMore }` en los dos caminos. Con la v2, un `--limit` de más de 100 se pide en varias páginas (`v2Range`). |
+| Colecciones enteras en v1 | La v2 recorre `nextOffset` con `limit=100` (`v2All`) y emite el array completo. |
+| Borrados | `{ "success": true, "deleted": "<id>" }`; en lote, `{ "success": true, "deleted": <n> }` (`affected` en v1, `data.deleted` en v2). |
+| Escrituras de inventario | `PATCH /:id` en v2 (el id sale del body). Referencias: `manufacturer: { idManufacturer }` → `manufacturerId`, y las de cada recurso (abajo). |
+| Bombas de calor | En v2, `identifier` → `name` en bodies y en el `--query` de `filter`; la CLI borra el alias `name` de las respuestas. |
 
-- **Sí**: ruta v2 equivalente con el mismo contrato de fondo; la v2 llama al mismo endpoint de Solar.
-- **Parcial**: hay una ruta v2, pero el contrato cambia (recurso nativo con otra forma o paginación, otros parámetros o body, un upsert en vez de un update, otro controlador).
-- **No**: no hay ruta v2.
+## Correcciones del camino v1 (§3.0.6)
 
-## Resumen por grupo de comandos
+| Comando | v1 antes | v1 ahora |
+|---|---|---|
+| `studies list` | `limit`, `offset`, `state`, `fromDate`, `toDate` en el body: devolvía todo | `limit`/`offset` en la query; `--state` → `states: [{ idSolarStudyMetadataState }]` (resuelto con `GET /solar-study/states`, sin distinguir mayúsculas; si no existe, lista vacía); `--from` → `creationTimestamp: { date, operator: 'after' }`; `--to` → se cuentan los estudios posteriores (`after <to> 23:59:59.999`) y se desplaza el `offset` (el orden es `creationTimestamp DESC`), así `total` y la paginación son exactos; siempre `closed=false` y `won=false` |
+| `inventory <recurso> filter` | `limit`/`offset` en el body | En la query. La respuesta `[items, total]` se lee bien (antes se imprimía la tupla) |
+| `inventory inverters list` | `limit` (ignorado) | `size` |
+| `inventory chargers list` sin `--active-only` | `unactive=true` = sólo inactivos | Dos llamadas (activos e inactivos), mezcla por id y corte del rango |
+| `inventory kits list`, `custom-assets list`, `custom-asset-types list` | La v1 devuelve la colección entera | Paginación en cliente (`total` real) |
+| `inventory kits get`, `studies set kit` | Lista entera y búsqueda | Igual en v1; `GET /inventory/kits/:id` en v2 |
+| `inventory kits assemble` | Batería validada contra las baterías de kit | Contra el inventario (`GET /solar-battery/:id`), que es lo que el kit referencia |
+| `studies set tariff --market` | `market` a `/tarifas-atr` (siempre España) | `pais` |
+| `consumption custom-tags`, `custom-profile-info` | Sin `clientId`; `id` ignorado | `clientId` del JWT (o del perfil) y filtro por id en cliente (array de 0 o 1) |
+| `config theme get\|edit` | `--client-uid` obligatorio | Opcional: por defecto, la cuenta de la sesión |
 
-Rutas distintas que usa cada grupo. Algunas se repiten entre grupos (p. ej. `studies set kit` usa `GET /solar-kits` de inventario); el total global las cuenta una sola vez.
+## Rutas por comando
 
-| Grupo | Servicios | Rutas | Sí | Parcial | No |
-|---|---|---:|---:|---:|---:|
-| `studies` (incl. builder: `set`, `save`, `pull`, `calculate`, …) | solar, profiles, periods | 17 | 0 | 8 | 9 |
-| `ppa` | solar | 4 | 0 | 1 | 3 |
-| `inventory` (9 recursos de factory + manufacturers + custom-fields + kits) | solar | 89 | 0 | 45 | 44 |
-| `templates` | solar | 1 | 1 | 0 | 0 |
-| `geocode` | solar | 2 | 2 | 0 | 0 |
-| `shareables` | templates | 1 | 0 | 1 | 0 |
-| `projects` | solar | 7 | 0 | 0 | 7 |
-| `solarform` | solar | 5 | 0 | 0 | 5 |
-| `config theme` / `config solarform` (+ `advanced`) | security, solar | 9 | 0 | 0 | 9 |
-| `consumption` | profiles, periods | 6 | 0 | 1 | 5 |
-| `notifications` | notifications | 1 | 0 | 0 | 1 |
-| **Total (rutas únicas)** | | **134** | **3** | **51** | **80** |
+### Estudios, cálculo y PPA (dominio A)
 
-Sin llamadas HTTP: `curves *` (cálculo local con `energy-types`), `config set|get|list|create-profile|use` (fichero local), `studies init|validate|set name|market|client|prices|phase|economics|batteries|data|add surface|remove surface|add-comment` (sólo editan el JSON local) y `command-profile`.
+| Comando | v1 | v2 | Contrato |
+|---|---|---|---|
+| `studies list` | POST `/solar/solar-study/findWithPaginationAndFilters` (+ GET `/solar-study/states`) | GET `/studies/solar?limit&offset&clientName&state&from&to&closed=false&won=false` | A1 |
+| `studies metadata <id>` | GET `/solar/solar-study/findSolarStudyMetadataById/:id` | GET `/study-metadata/:id` | A2 |
+| `studies metadata <id> --by-study-id` | GET `/solar/solar-study/metadata/solar-study-id/:id` | GET `/studies/solar/:id/metadata` | A3 |
+| `studies get`, `curves`, `pull`, `ppa calculate --study` | GET `/solar/solar-study/findById/:id` | GET `/studies/solar/:id` | A4 |
+| `studies calculate-production`, `studies calculate production` | POST `/solar/solar-study/calculateProduction` | POST `/calculations/solar-production` | A5 |
+| `studies optimize-surfaces` | GET `/solar/solar-study/optimizeSurfaces?lat&lon` | GET `/calculations/optimal-angles?lat&lon` | A6 |
+| `ppa templates list` | GET `/solar/solar-study/ppa-templates` | GET `/ppa-templates` (todas las páginas) | A7 |
+| `ppa templates get` | GET `/solar/solar-study/ppa-templates/:id` | GET `/ppa-templates/:id` | A8 |
+| `ppa calculate` | POST `/solar/solar-study/calculate-ppa-on-study` `{ data, ppaTemplateId }` | POST `/calculations/ppa` `{ study, ppaTemplateId }` | A9 |
+| `studies save` | POST `/solar/solar-study?idSolarStudyState&creditAmount&saveAsNew` | Con `_id` y sin `--save-as-new`: PUT `/studies/solar/:_id?stateId`. Si no: POST `/studies/solar?idSolarStudyState[&saveAsNew=true]` sin `_id`. `--credit-amount` se ignora con aviso | A10 |
+| `studies comment` | POST `/solar/solar-study/addSolarStudyComment/:id` | POST `/studies/solar/:id/comments` (sin `creationUserUID` si el perfil no tiene persona) | A11 |
+| `consumption periods`, `studies set consumption` (periodos/meses), `studies calculate-results` | GET `/periods/periodos?idTarifa&idZona&fechaInicio&fechaFin&market` | GET `/reference/periods?tariffId&zoneId&startDate&endDate&market` | A12 |
+| `studies set tariff` | GET `/periods/tarifas-atr?pais` y `/periods/zonas?market` | GET `/reference/tariffs?market` y `/reference/zones?market` | A13, A14 |
+| `consumption ree-profiles`, `studies set consumption` | GET `/profiles/ree-profiles` | GET `/reference/ree-profiles` | A15 |
+| `consumption estimate`, `studies set consumption --annual --pattern` | POST `/profiles/consumption-estimation?<query>` + body | POST `/calculations/consumption-estimation` (un body; `annualConsumption` numérico) | A16 |
+| `consumption custom-tags` | GET `/profiles/custom-profiles/getTags?clientId` | GET `/reference/custom-profiles/tags` | A17 |
+| `consumption custom-profile-info` | GET `/profiles/custom-profiles/getInfo?clientId` + filtro | GET `/reference/custom-profiles?id` | A18 |
+| `consumption from-file --eredes-zip` | POST `/profiles/consumption-files-processor/portugal/eredes-zip` (multipart) | POST `/calculations/consumption-files/eredes-zip` (multipart) | A19 |
+| `notifications send` | POST `/notifications/notifications` | POST `/notifications`. 422 `NOTIFICATIONS_DISABLED_FOR_CLIENT`/`NOTIFICATION_TYPE_DISABLED` → `{ sent: false, reason }` con salida 0, como el string de la v1 | A20 |
 
-## Inventario completo por servicio
+### Inventario (dominio B)
 
-Las rutas son relativas al servicio (`<server>/<service><ruta>`). En la columna «Equivalente v2», el prefijo `/api/v2` se omite.
+Recursos de `RESOURCES` (`src/commands/inventory/resources.ts`), con `list|get|create|update|delete|delete-batch|filter`:
 
-### security (2)
-
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
+| Recurso CLI | v1 | v2 (`/inventory/…`) | Orden v2 (`sort`) | Particularidades |
 |---|---|---|---|---|
-| GET | `/clients/config/clientThemeByClientUID/:clientUid` | `config theme get`, `config theme edit` | No | — |
-| POST | `/clients/config/updateTheme` | `config theme set`, `config theme edit` | No | — |
+| `panels` | `/solar/solar-panels` | `panels` | `-creationTimestamp` | |
+| `inverters` | `/solar/solar-inverter` (update con el id en el body) | `inverters` | `id` | v1 `size` |
+| `batteries` | `/solar/solar-battery` | `batteries` | `id` | |
+| `chargers` | `/solar/charger` (update con id en body) | `chargers` | `id` | v1 en dos llamadas |
+| `heatpumps` | `/solar/heat-pump` (update con id en body) | `heat-pumps` | `id` | `identifier` ↔ `name` |
+| `custom-assets` | `/solar/custom-asset` (get: `/custom-asset/id/:id`) | `custom-assets` | `-creationTimestamp` | `customAssetType` → `customAssetTypeId`; `customAssetCustomField[{ customField, value }]` → `customFields[{ customFieldId, value }]`. Sin `delete-batch` |
+| `custom-asset-types` | `/solar/custom-asset/type` (get: `/type/id/:id`) | `custom-asset-types` | `id` | `filter` sin `active`. Sin `delete-batch` |
+| `charger-kits` | `/solar/charger/ve-charger-kits` | `charger-kits` | `id` | `charger` → `chargerId`; `veChargerKitCustomAssets` → `customAssets[{ customAssetId, units }]` |
+| `heatpump-kits` | `/solar/heat-pump/heatpump-kits` | `heat-pump-kits` | `id` | `heatpump` → `heatpumpId`; `heatpumpKitCustomAssets` → `customAssets` |
+| `kits` | `/solar/solar-kits` (filter: `/solar-kits/filters`) | `kits` | `id` | Sin `create` (se usa `assemble`). Referencias de B-70 |
 
-### solar — estudios y PPA (11)
+Operaciones de cada recurso:
 
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
-|---|---|---|---|---|
-| POST | `/solar-study/findWithPaginationAndFilters` | `studies list` | Parcial: `GET /studies/solar` (nativo: `name`, `clientName`, `closed`, `won`; sin `state` ni rango de fechas) o `POST /studies/solar/search` → `/api/solar-study/filters` | studies:read |
-| GET | `/solar-study/findSolarStudyMetadataById/:id` | `studies metadata` | No (no hay get de metadata por id) | — |
-| GET | `/solar-study/metadata/solar-study-id/:id` | `studies metadata --by-study-id` | No | — |
-| GET | `/solar-study/findById/:id` | `studies get`, `studies curves`, `studies pull`, `ppa calculate --study` | Parcial: `GET /studies/solar/:id` (nativo). Para curvas: `GET /studies/solar/:id/curves` y `/curve?path=` | studies:read |
-| POST | `/solar-study?idSolarStudyState&creditAmount&saveAsNew` | `studies save` | Parcial: `POST /studies/solar` (crear, `idSolarStudyState`) + `PUT /studies/solar/:id?stateId` (actualizar). Sin `creditAmount` ni `saveAsNew` | studies:write |
-| POST | `/solar-study/addSolarStudyComment/:id` | `studies comment` | No | — |
-| POST | `/solar-study/calculateProduction` | `studies calculate-production`, `studies calculate production` | Parcial: `POST /calculations/solar-production` → `/api/calculate-solar-production` (mismo DTO `CalculateProductionDto`, pero envuelto en `{data, code, error}` y llama a `calculateStimateProduction`, no al controlador interno con fallback PVGIS→PVWatts) | calculations:write |
-| GET | `/solar-study/optimizeSurfaces?lat&lon` | `studies optimize-surfaces` | No | — |
-| GET | `/solar-study/ppa-templates` | `ppa templates list` | No | — |
-| GET | `/solar-study/ppa-templates/:id` | `ppa templates get` | No | — |
-| POST | `/solar-study/calculate-ppa-on-study` | `ppa calculate` | No | — |
+| Subcomando | v1 | v2 |
+|---|---|---|
+| `list [--active-only]` | GET `<base>?limit&offset[&unactive=true]` | GET `/inventory/<r>?limit&offset&sort[&active=true]` (B-1…) |
+| `get <id>` | GET `<base>/:id` (o su ruta propia) | GET `/inventory/<r>/:id` |
+| `create` | POST `<base>` | POST `/inventory/<r>` |
+| `update <id>` | PUT `<base>/:id` o PUT `<base>` con el id | PATCH `/inventory/<r>/:id` |
+| `delete <id>` | DELETE `<base>/:id` | DELETE `/inventory/<r>/:id` (204) |
+| `delete-batch --ids` | POST `<base>/<delete-batch-…>` `[ids]` | POST `/inventory/<r>/batch-delete` `{ ids }` |
+| `filter --query` | POST `<base>/filter?limit&offset` | POST `/inventory/<r>/search?limit&offset&active=true` |
 
-### solar — inventario: recursos de `factory.ts` (61)
+Resto del inventario:
 
-Cada recurso de `RESOURCES` (`src/commands/inventory/index.ts`) genera los mismos subcomandos `inventory <recurso> list|get|create|update|delete|delete-batch|filter`. Las llamadas que hacen:
+| Comando | v1 | v2 | Contrato |
+|---|---|---|---|
+| `inventory manufacturers list` | GET `/solar/manufacturers` | GET `/inventory/manufacturers` (todas las páginas) | B-62 |
+| `inventory manufacturers create` | POST `/solar/manufacturers` | POST `/inventory/manufacturers` | B-63 |
+| `inventory custom-fields list\|get\|create\|update\|delete` | `/solar/custom-asset/custom-field/{all, id/:id, , :id, :id}` | `/inventory/custom-fields[/:id]` (list: todas las páginas; update: PATCH) | B-64…B-68 |
+| `inventory kits archive` | PUT `/solar/solar-kits/archive/:id` | POST `/inventory/kits/:id/archive`. Salida `{ idSolarKit, active: false }` | B-75 |
+| `inventory kits assemble` | Validación: POST `/solar-kits/solar-panels/filter`, GET `/solar-kits/inverters`, GET `/solar-battery/:id`; alta: POST `/solar-kits` | Validación: GET `/inventory/kit-panels/:id`, `/kit-inverters/:id`, `/batteries/:id`; alta: POST `/inventory/kits` con ids | B-74 |
+| `studies optimize-peakpower` (modo kits) | GET `/solar/solar-kits` | GET `/inventory/kits?active=true&sort=id` (todas las páginas) | B-69 |
+| `inventory kits panels list\|get\|create\|update\|delete\|featured` | `/solar/solar-kits/solar-panels…` (get por `filter`) | `/inventory/kit-panels…`; featured: GET `/inventory/kit-panels/:id/kits` | B-76…B-81 |
+| `inventory kits inverters list\|create\|update\|delete\|featured` | `/solar/solar-kits/inverters…` | `/inventory/kit-inverters…` | B-82…B-86 |
+| `inventory kits batteries list\|create\|delete` | `/solar/solar-kits/batteries…` | `/inventory/kit-batteries…` | B-87…B-89 |
 
-- `list` → `GET <base>?limit&offset[&unactive=true]`
-- `get` → `GET <base>/:id` (o `getPath`)
-- `create` → `POST <base>`
-- `update` → `PUT <base>/:id`, o `PUT <base>` con el id en el body si el recurso tiene `putBodyOnly`
-- `delete` → `DELETE <base>/:id`
-- `delete-batch` → `POST <base>/<batchDeletePath>`, sólo si el recurso lo define
-- `filter` → `POST <filterPath | base/filter>`
+### Proyectos, SolarForm, ajustes, shares (dominio C) y lo que ya estaba en v2
 
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
-|---|---|---|---|---|
-| GET | `/solar-panels` | `inventory panels list` | Parcial: `GET /inventory/panels` (nativo; `active` en lugar de `unactive`) | inventory:read |
-| GET | `/solar-panels/:id` | `inventory panels get`, `studies set panel` | Parcial: `GET /inventory/panels/:id` | inventory:read |
-| POST | `/solar-panels` | `inventory panels create` | Parcial: `POST /inventory/panels` (nativo, valida campos) | inventory:write |
-| PUT | `/solar-panels/:id` | `inventory panels update` | Parcial: `PATCH /inventory/panels/:id` | inventory:write |
-| DELETE | `/solar-panels/:id` | `inventory panels delete` | Parcial: `DELETE /inventory/panels/:id` (204) | inventory:write |
-| POST | `/solar-panels/delete-batch-solar-panels` | `inventory panels delete-batch` | No | — |
-| POST | `/solar-panels/filter` | `inventory panels filter` | No | — |
-| GET | `/solar-inverter` | `inventory inverters list` | Parcial: `GET /inventory/inverters` | inventory:read |
-| GET | `/solar-inverter/:id` | `inventory inverters get`, `studies set inverter` | Parcial: `GET /inventory/inverters/:id` | inventory:read |
-| POST | `/solar-inverter` | `inventory inverters create` | Parcial: `POST /inventory/inverters` | inventory:write |
-| PUT | `/solar-inverter` (id en body) | `inventory inverters update` | Parcial: `PATCH /inventory/inverters/:id` | inventory:write |
-| DELETE | `/solar-inverter/:id` | `inventory inverters delete` | Parcial: `DELETE /inventory/inverters/:id` | inventory:write |
-| POST | `/solar-inverter/delete-batch-solar-inverters` | `inventory inverters delete-batch` | No | — |
-| POST | `/solar-inverter/filter` | `inventory inverters filter` | No | — |
-| GET | `/solar-battery` | `inventory batteries list` | Parcial: `GET /inventory/batteries` | inventory:read |
-| GET | `/solar-battery/:id` | `inventory batteries get` | Parcial: `GET /inventory/batteries/:id` | inventory:read |
-| POST | `/solar-battery` | `inventory batteries create` | Parcial: `POST /inventory/batteries` | inventory:write |
-| PUT | `/solar-battery/:id` | `inventory batteries update` | Parcial: `PATCH /inventory/batteries/:id` | inventory:write |
-| DELETE | `/solar-battery/:id` | `inventory batteries delete` | Parcial: `DELETE /inventory/batteries/:id` | inventory:write |
-| POST | `/solar-battery/delete-batch-solar-batteries` | `inventory batteries delete-batch` | No | — |
-| POST | `/solar-battery/filter` | `inventory batteries filter` | No | — |
-| GET | `/charger` | `inventory chargers list` | Parcial: `GET /inventory/chargers` | inventory:read |
-| GET | `/charger/:id` | `inventory chargers get` | Parcial: `GET /inventory/chargers/:id` | inventory:read |
-| POST | `/charger` | `inventory chargers create` | Parcial: `POST /inventory/chargers` | inventory:write |
-| PUT | `/charger` (id en body) | `inventory chargers update` | Parcial: `PATCH /inventory/chargers/:id` | inventory:write |
-| DELETE | `/charger/:id` | `inventory chargers delete` | Parcial: `DELETE /inventory/chargers/:id` | inventory:write |
-| POST | `/charger/delete-batch-chargers` | `inventory chargers delete-batch` | No | — |
-| POST | `/charger/filter` | `inventory chargers filter` | No | — |
-| GET | `/heat-pump` | `inventory heatpumps list` | Parcial: `GET /inventory/heat-pumps` | inventory:read |
-| GET | `/heat-pump/:id` | `inventory heatpumps get` | Parcial: `GET /inventory/heat-pumps/:id` | inventory:read |
-| POST | `/heat-pump` | `inventory heatpumps create` | Parcial: `POST /inventory/heat-pumps` | inventory:write |
-| PUT | `/heat-pump` (id en body) | `inventory heatpumps update` | Parcial: `PATCH /inventory/heat-pumps/:id` | inventory:write |
-| DELETE | `/heat-pump/:id` | `inventory heatpumps delete` | Parcial: `DELETE /inventory/heat-pumps/:id` | inventory:write |
-| POST | `/heat-pump/delete-batch-heatpumps` | `inventory heatpumps delete-batch` | No | — |
-| POST | `/heat-pump/filter` | `inventory heatpumps filter` | No | — |
-| GET | `/custom-asset` | `inventory custom-assets list` | No | — |
-| GET | `/custom-asset/id/:id` | `inventory custom-assets get`, `studies set custom-assets` | No | — |
-| POST | `/custom-asset` | `inventory custom-assets create` | No | — |
-| PUT | `/custom-asset/:id` | `inventory custom-assets update` | No | — |
-| DELETE | `/custom-asset/:id` | `inventory custom-assets delete` | No | — |
-| POST | `/custom-asset/filter` | `inventory custom-assets filter` | No | — |
-| GET | `/custom-asset/type` | `inventory custom-asset-types list` | No | — |
-| GET | `/custom-asset/type/id/:id` | `inventory custom-asset-types get` | Parcial: `GET /inventory/custom-asset-types/:id` → `/api/custom-asset/type/id/:id` (controlador público; añade `customFields`/`customAssets`) | inventory:read |
-| POST | `/custom-asset/type` | `inventory custom-asset-types create` | No | — |
-| PUT | `/custom-asset/type/:id` | `inventory custom-asset-types update` | No | — |
-| DELETE | `/custom-asset/type/:id` | `inventory custom-asset-types delete` | No | — |
-| POST | `/custom-asset/type/filter` | `inventory custom-asset-types filter` | No | — |
-| GET | `/charger/ve-charger-kits` | `inventory charger-kits list` | No | — |
-| GET | `/charger/ve-charger-kits/:id` | `inventory charger-kits get` | No | — |
-| POST | `/charger/ve-charger-kits` | `inventory charger-kits create` | No | — |
-| PUT | `/charger/ve-charger-kits` (id en body) | `inventory charger-kits update` | No | — |
-| DELETE | `/charger/ve-charger-kits/:id` | `inventory charger-kits delete` | No | — |
-| POST | `/charger/ve-charger-kits/delete-batch-ve-charger-kits` | `inventory charger-kits delete-batch` | No | — |
-| POST | `/charger/ve-charger-kits/filter` | `inventory charger-kits filter` | No | — |
-| GET | `/heat-pump/heatpump-kits` | `inventory heatpump-kits list` | No | — |
-| GET | `/heat-pump/heatpump-kits/:id` | `inventory heatpump-kits get` | No | — |
-| POST | `/heat-pump/heatpump-kits` | `inventory heatpump-kits create` | No | — |
-| PUT | `/heat-pump/heatpump-kits` (id en body) | `inventory heatpump-kits update` | No | — |
-| DELETE | `/heat-pump/heatpump-kits/:id` | `inventory heatpump-kits delete` | No | — |
-| POST | `/heat-pump/heatpump-kits/delete-batch-heatpump-kits` | `inventory heatpump-kits delete-batch` | No | — |
-| POST | `/heat-pump/heatpump-kits/filter` | `inventory heatpump-kits filter` | No | — |
+| Comando | v1 | v2 | Contrato |
+|---|---|---|---|
+| `config theme get` | GET `/security/clients/config/clientThemeByClientUID/:uid` | GET `/settings/theme` (con `--client-uid` ajeno: `CLIENT_UID_MISMATCH` tras GET `/me`) | 1 |
+| `config theme set\|edit` | POST `/security/clients/config/updateTheme` | PATCH `/settings/theme` sin `idClientThemeConfig`, `customURL` ni `client` | 2 |
+| `projects list` | GET `/solar/api/alexandria-projects` | GET `/projects` (todas las páginas) | C1 |
+| `projects get`, `files list`, `files download` | GET `/solar/api/alexandria-projects/:id` | GET `/projects/:id` | C2 |
+| `projects create\|update\|delete` | POST/PUT/DELETE `/solar/api/alexandria-projects[/:id]` | POST/PATCH/DELETE `/projects[/:id]` | C3–C5 |
+| `projects files add\|remove` | POST/DELETE `/solar/api/alexandria-projects/:id/files[/:fileId]` | POST/DELETE `/projects/:id/files[/:fileId]` (JSON en los dos) | C6, C7 |
+| `solarform simple` | POST `/solar/api/solar-form/simple?save&email&solarKitId&excessesCompensationMode` | POST `/solar-form/estimates/simple?…` (201) | C8 |
+| `solarform calculate` | POST `/solar/api/solar-form?save&email` | POST `/solar-form/estimates?…` (201) | C9 |
+| `solarform config` | GET `/solar/solar-form/solar-form-config` (por `Origin`: desde la CLI no encuentra nada) | GET `/settings/solar-form/public-view` | C10 |
+| `config solarform get` | GET `/solar/solar-form/get-solar-form-config?getParameters` | GET `/settings/solar-form?includeParameters` | C11 |
+| `config solarform create` | POST `/solar/solar-form/solar-form-config?getParameters` | POST `/settings/solar-form?includeParameters` sin `idSolarFormConfig`/`clientUID` | C12 |
+| `config solarform update <id>`, `edit` | PUT `/solar/solar-form/solar-form-config/:id` | PATCH `/settings/solar-form` con `idSolarFormConfig` en el body (comprobación de identidad) | C13 |
+| `config solarform advanced get`, `<sección> get` | GET `/solar/solar-form/config/advanced` | GET `/settings/solar-form/advanced` | C14 |
+| `config solarform advanced update`, `<sección> set\|edit` | PUT `/solar/solar-form/config/advanced` (objeto fusionado) | PATCH `/settings/solar-form/advanced` (objeto fusionado) | C15 |
+| `config solarform advanced delete` | DELETE `/solar/solar-form/config/advanced` | DELETE `/settings/solar-form/advanced`. Salida `{ success: true }` | C16 |
+| `shareables create` | POST `/templates/shareable?<link-params>` | POST `/shares` con `linkParams: { … }` | C17 |
+| `templates list` | GET `/solar/api/templates?templateIdentifier` | GET `/templates?templateIdentifier` | ya existía |
+| `geocode resolve` / `reverse` | GET `/solar/api/geocode` / `/api/reverse-geocode` | GET `/reference/geocode` / `/reference/reverse-geocode` | ya existía |
+| `satvolt …`, `satvolt credits …` | `/satvolt/api/v1/…`, `/payments/…` | `/leadgen/…`, `/leadgen/credit-packs…` | PR #47 |
+| `auth status` | GET `/security/…` | GET `/me` | PR #47 |
 
-### solar — inventario: fabricantes, campos personalizados y kits (28)
+### Exclusiones: sólo v1 (§4)
 
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
-|---|---|---|---|---|
-| GET | `/manufacturers` | `inventory manufacturers list` | Parcial: `GET /inventory/manufacturers` (nativo, paginado) | inventory:read |
-| POST | `/manufacturers` | `inventory manufacturers create` | Parcial: `POST /inventory/manufacturers` → `/api/manufacturer` | inventory:write |
-| GET | `/custom-asset/custom-field/all` | `inventory custom-fields list` | No | — |
-| GET | `/custom-asset/custom-field/id/:id` | `inventory custom-fields get` | No | — |
-| POST | `/custom-asset/custom-field` | `inventory custom-fields create` | No | — |
-| PUT | `/custom-asset/custom-field/:id` | `inventory custom-fields update` | No | — |
-| DELETE | `/custom-asset/custom-field/:id` | `inventory custom-fields delete` | No | — |
-| GET | `/solar-kits?unactive=true` / `?limit=500` | `inventory kits list`, `inventory kits get` (lista todo y filtra en cliente), `studies set kit`, `studies optimize-peakpower` | Parcial: `GET /inventory/kits` (nativo; máximo 100 por página) o `GET /inventory/kits/:id` | inventory:read |
-| PUT | `/solar-kits/:id` | `inventory kits update` | Parcial: `POST /inventory/kits` (upsert → `/api/solar-kits`) | inventory:write |
-| DELETE | `/solar-kits/:id` | `inventory kits delete` | Parcial: `DELETE /inventory/kits/:id` → `/api/solar-kits/:id` | inventory:write |
-| POST | `/solar-kits/delete-batch-solar-kits` | `inventory kits delete-batch` | No | — |
-| POST | `/solar-kits/filters` | `inventory kits filter` | Parcial: `POST /inventory/kits/search` → `/api/solar-kits/filter` (otro endpoint de Solar: `filter` ≠ `filters`) | inventory:read |
-| POST | `/solar-kits` | `inventory kits assemble` | Parcial: `POST /inventory/kits` → `/api/solar-kits` | inventory:write |
-| PUT | `/solar-kits/archive/:kitId` | `inventory kits archive` | No | — |
-| GET | `/solar-kits/solar-panels?limit&offset` | `inventory kits panels list` | Parcial: `GET /inventory/kit-panels` | inventory:read |
-| POST | `/solar-kits/solar-panels/filter` `{idKitSolarPanel}` | `inventory kits panels get`, `inventory kits assemble` | Parcial: `GET /inventory/kit-panels/:id` | inventory:read |
-| POST | `/solar-kits/solar-panels` | `inventory kits panels create` | Parcial: `POST /inventory/kit-panels` (upsert → `/api/kitSolarPanel`) | inventory:write |
-| PUT | `/solar-kits/solar-panels/:id` | `inventory kits panels update` | Parcial: `POST /inventory/kit-panels` (upsert; sin PATCH) | inventory:write |
-| DELETE | `/solar-kits/solar-panels/:id` | `inventory kits panels delete` | Parcial: `DELETE /inventory/kit-panels/:id` | inventory:write |
-| GET | `/solar-kits/solar-panels/findFeaturedSolarKits/:id` | `inventory kits panels featured` | No | — |
-| GET | `/solar-kits/inverters?limit&offset` | `inventory kits inverters list`, `inventory kits assemble` (`limit=200`) | Parcial: `GET /inventory/kit-inverters` | inventory:read |
-| POST | `/solar-kits/inverters` | `inventory kits inverters create` | Parcial: `POST /inventory/kit-inverters` (upsert) | inventory:write |
-| PUT | `/solar-kits/inverters/:id` | `inventory kits inverters update` | Parcial: `POST /inventory/kit-inverters` (upsert) | inventory:write |
-| DELETE | `/solar-kits/inverters/:id` | `inventory kits inverters delete` | Parcial: `DELETE /inventory/kit-inverters/:id` | inventory:write |
-| GET | `/solar-kits/inverters/findFeaturedSolarKits/:id` | `inventory kits inverters featured` | No | — |
-| GET | `/solar-kits/batteries?limit&offset` | `inventory kits batteries list`, `inventory kits assemble` (`limit=200`) | Parcial: `GET /inventory/kit-batteries` | inventory:read |
-| POST | `/solar-kits/batteries` | `inventory kits batteries create` | Parcial: `POST /inventory/kit-batteries` (upsert) | inventory:write |
-| DELETE | `/solar-kits/batteries/:id` | `inventory kits batteries delete` | Parcial: `DELETE /inventory/kit-batteries/:id` | inventory:write |
+Con una clave `sun_` responden `V2_KEY_NOT_SUPPORTED` antes de llamar.
 
-### solar — rutas `/api/*` (controlador público de Solar) (12)
+| Comando | v1 | Por qué |
+|---|---|---|
+| `config solarform advanced init-default` | POST `/solar/solar-form/config/default/advanced/:clientUid` (cabecera `suntropy-auth`) | Superadministración sobre otro tenant |
+| `solarform statistics --create` | POST `/solar/solar-form/solar-form-statistics?statsId` | Telemetría anónima del widget |
+| `solarform statistics --update` | PUT `/solar/solar-form/solar-form-statistics` | Ídem, y el tenant sale del body |
 
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
-|---|---|---|---|---|
-| GET | `/api/templates?templateIdentifier` | `templates list` | **Sí**: `GET /templates` → `/api/templates` | documents:read |
-| GET | `/api/geocode?address&country` | `geocode resolve` | **Sí**: `GET /reference/geocode` | reference:read |
-| GET | `/api/reverse-geocode?lat&lng` | `geocode reverse` | **Sí**: `GET /reference/reverse-geocode` | reference:read |
-| GET | `/api/alexandria-projects` | `projects list` | No | — |
-| GET | `/api/alexandria-projects/:id` | `projects get`, `projects files list`, `projects files download` | No | — |
-| POST | `/api/alexandria-projects` | `projects create` | No | — |
-| PUT | `/api/alexandria-projects/:id` | `projects update` | No | — |
-| DELETE | `/api/alexandria-projects/:id` | `projects delete` | No | — |
-| POST | `/api/alexandria-projects/:id/files` | `projects files add` | No | — |
-| DELETE | `/api/alexandria-projects/:id/files/:fileId` | `projects files remove` | No | — |
-| POST | `/api/solar-form/simple?save&email&solarKitId&excessesCompensationMode` | `solarform simple` | No (`/studies/solar/simple` es `solar-study/simple`, otro flujo) | — |
-| POST | `/api/solar-form?save&email` | `solarform calculate` | No | — |
+Sin llamadas HTTP (iguales con cualquier credencial): `curves *`, `config set|get|list|create-profile|use`, `studies init|validate|set name|market|client|prices|phase|economics|batteries|data|add surface|remove surface|add-comment` y `command-profile`.
 
-### solar — configuración de SolarForm (10)
+## Diferencias permitidas en la salida (§1.8)
 
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
-|---|---|---|---|---|
-| GET | `/solar-form/solar-form-config` | `solarform config` | No | — |
-| PUT | `/solar-form/solar-form-statistics` | `solarform statistics --update` | No | — |
-| POST | `/solar-form/solar-form-statistics?statsId` | `solarform statistics --create` | No | — |
-| GET | `/solar-form/get-solar-form-config` | `config solarform get`, `config solarform edit` | No | — |
-| POST | `/solar-form/solar-form-config` | `config solarform create` | No | — |
-| PUT | `/solar-form/solar-form-config/:id` | `config solarform update`, `config solarform edit` | No | — |
-| GET | `/solar-form/config/advanced` | `config solarform advanced get|update`, `config solarform advanced <sección> get|set|edit` | No | — |
-| PUT | `/solar-form/config/advanced` | `config solarform advanced update`, `config solarform advanced <sección> set|edit` | No | — |
-| DELETE | `/solar-form/config/advanced` | `config solarform advanced delete` | No | — |
-| POST | `/solar-form/config/default/advanced/:clientUid?email&url` | `config solarform advanced init-default` | No | — |
+La prueba de paridad (`npm run parity`) las ignora: autoría de lo creado con la clave (`creationUserUID`, `lastEditUserUID`, `ownerUserUID`, `uploadedByUserUID`, `assignedUserUID`, `isOwner`, `canEdit`), `password`/`passwordConfirm` de los shareables, el registro `client` del tema, los proyectos `PRIVATE` de personas (no se ven con una clave), `--credit-amount` y los valores numéricos de `solar-production` hasta que A5 esté desplegado.
 
-Las secciones de `advanced` son `general`, `cover`, `surfaces`, `consumer`, `inclination`, `orientation`, `panels`, `consumption`, `results` y `custom-fields`.
+## Pruebas
 
-> Las tablas de solar suman 11 + 61 + 28 + 12 + 10 = 122 filas.
-
-### templates (sharing) (1)
-
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
-|---|---|---|---|---|
-| POST | `/shareable[?<linkParams>]` | `shareables create` | Parcial: `POST /studies/solar/:id/shares?templateId` → `/api/share/:id` (sólo estudios solares; sin `elementType`, `shareableType`, `privacy`, `password` ni fechas) | documents:write |
-
-### profiles (5)
-
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
-|---|---|---|---|---|
-| POST | `/consumption-estimation?<query>` | `consumption estimate`, `studies set consumption --annual --pattern` | No | — |
-| GET | `/ree-profiles` | `consumption ree-profiles`, `studies set consumption` (modos por periodo o mes) | No | — |
-| GET | `/custom-profiles/getTags` | `consumption custom-tags` | No | — |
-| GET | `/custom-profiles/getInfo` | `consumption custom-profile-info` | No | — |
-| POST | `/consumption-files-processor/portugal/eredes-zip` (multipart) | `consumption from-file --eredes-zip` | No | — |
-
-### periods (3)
-
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
-|---|---|---|---|---|
-| GET | `/periodos?idTarifa&idZona&fechaInicio&fechaFin[&market]` | `consumption periods`, `studies set consumption` (modos por periodo o mes), `studies calculate-results` | Parcial: `GET /reference/periods?tariffId&zoneId&startDate&endDate` (vía Solar, sin `market`) | reference:read |
-| GET | `/tarifas-atr` | `studies set tariff` | No | — |
-| GET | `/zonas` | `studies set tariff` | No | — |
-
-### notifications (1)
-
-| Método | Ruta | Comando(s) | Equivalente v2 | Scope |
-|---|---|---|---|---|
-| POST | `/notifications` | `notifications send` | No | — |
-
-## Rutas que faltan en la v2 (por prioridad sugerida)
-
-**P1: estudios (el núcleo de lo que hacen Alexandria y las skills)**
-
-- Metadata de estudio: `GET` por id de metadata y por `solarStudyId` (`studies metadata`).
-- `studies list` con filtro por estado y por rango de fechas: el `GET /studies/solar` nativo sólo filtra por `name`, `clientName`, `closed` y `won`.
-- Guardar con `creditAmount` y `saveAsNew` (`studies save`), o decidir que `saveAsNew` sea crear sin `_id` en el cliente.
-- Comentarios de estudio: `POST .../comments` (`studies comment`; además genera la notificación al usuario).
-- `optimizeSurfaces` (ángulo y azimut óptimos).
-- Referencias de tarifa: `tarifas-atr` y `zonas`. Sin ellas, `studies set tariff` no funciona.
-- Perfiles de consumo: `consumption-estimation` y `ree-profiles`. `studies set consumption` depende de ellos.
-- Confirmar la paridad de `POST /calculations/solar-production` con el `calculateProduction` interno (forma de la respuesta y fallback PVGIS→PVWatts).
-
-**P1: inventario**
-
-- `custom-assets` (CRUD completo), que usa `studies set custom-assets`.
-- `custom-asset-types`: list, create, update y delete (hoy sólo hay get).
-- `custom-fields` (CRUD).
-- Búsqueda avanzada (`filter`) de paneles, inversores, baterías, cargadores y bombas de calor.
-- `delete-batch` de todos los recursos.
-- Kits: `archive` y `findFeaturedSolarKits` (paneles e inversores de kit). Además, `PATCH` en kit-panels, kit-inverters y kits; hoy sólo hay upsert por `POST`.
-- `charger-kits` y `heatpump-kits` (CRUD completo).
-
-**P1: plantillas y documentos**
-
-- Shareables genéricos (`POST /shareable` con `elementType`, `shareableType`, privacidad, contraseña y fechas). La v2 sólo comparte estudios solares.
-- PPA: `ppa-templates` (list y get) y `calculate-ppa-on-study`.
-
-**P2**
-
-- Proyectos de Alexandria (`/api/alexandria-projects`, 7 operaciones). Están en el catálogo v1 (`legacy-routes.js`), pero no en el v2.
-- Perfiles personalizados: `custom-profiles/getTags` y `getInfo`. Importación de EREDES (multipart).
-- SolarForm: `/api/solar-form` y `/api/solar-form/simple` (cálculo), `solar-form-config`, `solar-form-statistics`.
-- Notificaciones (`notifications send`). Exige decidir quién es el remitente con una clave de cliente; hoy la CLI envía «desde Alexandria».
-
-**P3: probablemente fuera de la API pública**
-
-- `config theme set` (requiere rol admin), `config solarform *` y `config solarform advanced *`.
-- `advanced init-default` (superadmin o localhost con la cabecera `suntropy-auth`).
-
-## Notas y trampas
-
-- **Las claves `sun_` no sirven en v1.** El gateway intercepta `/solar/api/*` y `/api/v1/*` (rutas legacy) y responde `403 V2_REQUIRED` a una clave `sun_` (`app.js`). La CLI ya llama a `/solar/api/...` para `geocode`, `templates list`, `projects` y `solarform simple|calculate`. Esas llamadas pasan por el gateway como v1. Para usarlas con `sun_` hay que reescribirlas a `/api/v2/...` (geocode y templates ya existen), no basta con cambiar el token. A la inversa, una ruta `/api/v2` exige una clave `sun_` y rechaza JWT y claves antiguas con `401 API_KEY_REQUIRED`. La CLI tendrá que elegir la ruta según el tipo de credencial (`kind` en `client.ts`) mientras convivan ambas.
-- **Enrutado local por puertos**: con `localhost` o `host:puerto`, `getServiceUrl` sustituye el servicio por un puerto (`security` 8080, `solar` 8086, `templates` 8090, `profiles` 8085, `periods` 8084, `notifications` 8093, `satvolt` 8099). La v2 necesita en cambio la URL del gateway (`resolveGatewayUrl`). Las pruebas locales de la fase 2 deben levantar el gateway.
-- **Límite de página 100**: `studies optimize-peakpower` pide `GET /solar-kits?limit=500`, `inventory kits assemble` pide `limit=200` y `kits get` / `studies set kit` piden la lista entera (`unactive=true`) para filtrar en cliente. Con la v2 hay que paginar con `nextOffset`, o usar `GET /inventory/kits/:id` para el get.
-- **Inactivos**: la CLI pide `unactive=true` para incluir los inactivos salvo con `--active-only`. Los listados nativos usan `active`; hay que comprobar qué devuelven por defecto.
-- **Update por body**: inversores, cargadores, bombas de calor y sus kits actualizan con `PUT <base>` y el id en el body (`putBodyOnly`). En la v2 es `PATCH /:id`. Los kits y sus componentes no tienen `PATCH`: su `POST` es un upsert («Create or update»).
-- **`filter` ≠ `filters`**: `inventory kits filter` usa `POST /solar-kits/filters` (interno). `POST /inventory/kits/search` apunta a `/api/solar-kits/filter`, que es otro endpoint y además era anónimo en v1.
-- **`kits get` sin endpoint por id**: el comando usa `getViaFilter`, que lista todo y filtra en cliente. La v2 sí tiene `GET /inventory/kits/:id` y simplificaría el comando.
-- **`studies get` / `pull` / `curves`** esperan el documento Mongo completo de `findById`. Hay que comprobar que el `GET /studies/solar/:id` nativo devuelve lo mismo, porque el README del gateway dice que los listados de estudios devuelven metadatos y no documentos completos. Para `studies curves`, la v2 ofrece `GET /studies/solar/:id/curve?path=`, que evita bajar el estudio entero.
-- **Respuestas vacías**: `assertFound` cubre el `200` con body vacío de `findById` y `addSolarStudyComment`. La v2 envuelve en `data`, así que la comprobación debe mirar `data` (o un 404).
-- **Periodos**: la CLI llama directamente al servicio `periods` con parámetros en español (`idTarifa`, `fechaInicio`, …) y `market`. La v2 pasa por Solar (`/api/periods`) con `tariffId`, `zoneId`, `startDate` y `endDate`, sin `market`. Hay que verificar los mercados distintos de ES.
-- **`config theme get`** es un endpoint público de security (lectura sin auth) y **`updateTheme`** exige rol admin. Ninguno de los dos encaja con una clave de cliente sin decidir antes los scopes.
-- **`advanced init-default`** envía la cabecera `suntropy-auth: <clientUID>` y sólo funciona como superadmin o en localhost. No debe exponerse en la v2.
-- **`notifications send`** es una llamada entre servicios en nombre de Alexandria (remitente fijo). Con una clave de cliente habría que restringir los destinatarios a los usuarios del tenant.
-- **`projects files download`** hace además un `GET` con axios a `file.url` (host de documentos), sin token a propósito. No es una ruta de Suntropy y no cambia con la v2.
-- **Multipart**: el gateway reenvía el body en bruto (`express.raw`), así que una futura ruta v2 para EREDES (`consumption from-file`) mantendría el `multipart/form-data`.
-- **Scopes**: para cubrir lo que tiene equivalente, la clave que use Alexandria necesitaría `studies:read`, `studies:write`, `inventory:read`, `inventory:write`, `calculations:write`, `reference:read`, `documents:read` y `documents:write`, además de los de LeadGen (`leadgen:*`, `credits:read`).
+- `test/parity-*.test.ts`: cada grupo de comandos con un servidor falso que responde a las dos versiones (respuestas en `test/fixtures/*.json`). Comprueban método, ruta, query y body de cada versión, y que la salida JSON es la misma.
+- `scripts/parity/`: el arnés contra un backend real (ver su README).

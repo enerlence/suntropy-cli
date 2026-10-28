@@ -16,7 +16,8 @@
     "start": "node dist/bin/suntropy.js",
     "prepublishOnly": "npm run build",
     "test": "node --import tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "parity": "node --import tsx scripts/parity/run.ts"
   },
   "keywords": [
     "suntropy",

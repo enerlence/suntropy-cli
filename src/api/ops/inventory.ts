@@ -91,9 +91,12 @@ function fromV2(cfg: ResourceConfig) {
   return <T>(data: T): T => (cfg.v2.identifierIsName ? eachItem(data, (x) => omit(x, ['name'])) : data);
 }
 
+/** v1 `manufacturer: { idManufacturer }` → v2 `manufacturerId`, in every resource that has one. */
+const MANUFACTURER_REF: RefRule = { from: 'manufacturer', to: 'manufacturerId', key: 'idManufacturer' };
+
 /** Body of a v2 inventory write, from the v1 body the user passes. */
 function toV2Body(cfg: ResourceConfig, body: Json | undefined): Json {
-  let out = toV2Refs(omit(body, [cfg.idField, 'clientUID']), cfg.v2.refs ?? []);
+  let out = toV2Refs(omit(body, [cfg.idField, 'clientUID']), [MANUFACTURER_REF, ...(cfg.v2.refs ?? [])]);
   if (cfg.v2.identifierIsName) out = renameKey(out, 'identifier', 'name');
   return out;
 }
@@ -273,11 +276,11 @@ const kitComponent = (name: 'panels' | 'inverters' | 'batteries', v1Base: string
   list: wholeList(`inventory.kits.${name}.list`, v1Base, `/inventory/${v2Resource}`, { sort: 'id' }),
   create: operation<{ body: Json }, unknown>(`inventory.kits.${name}.create`, {
     v1: v1('post', v1Base, { body: ({ body }) => body }),
-    v2: v2('post', `/inventory/${v2Resource}`, { body: ({ body }) => omit(body, ['clientUID']) }),
+    v2: v2('post', `/inventory/${v2Resource}`, { body: ({ body }) => toV2Refs(omit(body, ['clientUID']), [MANUFACTURER_REF]) }),
   }),
   update: operation<{ id: string; body: Json }, unknown>(`inventory.kits.${name}.update`, {
     v1: v1('put', ({ id }) => `${v1Base}/${id}`, { body: ({ body }) => body }),
-    v2: v2('patch', ({ id }) => `/inventory/${v2Resource}/${id}`, { body: ({ body }) => omit(body, ['clientUID']) }),
+    v2: v2('patch', ({ id }) => `/inventory/${v2Resource}/${id}`, { body: ({ body }) => toV2Refs(omit(body, ['clientUID']), [MANUFACTURER_REF]) }),
   }),
   delete: operation<{ id: string }, unknown>(`inventory.kits.${name}.delete`, {
     v1: v1('delete', ({ id }) => `${v1Base}/${id}`, { out: (_d, { id }) => deletedOne(id) }),
