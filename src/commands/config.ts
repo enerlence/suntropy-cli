@@ -14,7 +14,7 @@ export function registerConfigCommands(program: Command): void {
 
   cfg
     .command('set <key> <value>')
-    .description('Set a configuration value. Keys: server, token, activeProfile')
+    .description('Set a configuration value. Keys: server, token, gatewayUrl (API v2 gateway), activeProfile')
     .option('--profile <name>', 'Profile to modify')
     .action((key, value, opts) => {
       try {
