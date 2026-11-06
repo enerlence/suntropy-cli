@@ -8,6 +8,7 @@ import {
   satvoltClient,
   satvoltError,
 } from './api.js';
+import { PARCELS_HELP, addParcelOptions, applyParcelFields } from './parcels.js';
 
 const STEP_LIST_FIELDS = 'index,uid,action,name,disable,creditCost,executedLeads,runnable,reason';
 
@@ -35,7 +36,8 @@ export function registerSatvoltPipelineCommands(satvolt: Command): void {
   config
     .command('get <campaignId>')
     .description(
-      'Get the configuration: source, businessGroups, description and steps\n' +
+      'Get the configuration: source, businessGroups, leadSource (google_places or\n' +
+        'cadastral_parcels) and its parcel filters, description and steps\n' +
         '(uid, action, target, disable, structural, config).\n' +
         'Example:\n' +
         '  suntropy satvolt config get 59 --save pipeline.json',
@@ -78,7 +80,7 @@ export function registerSatvoltPipelineCommands(satvolt: Command): void {
   config
     .command('patch <campaignId>')
     .description(
-      'Partial change (PATCH). Body: { steps?, businessGroups?, description? }.\n' +
+      'Partial change (PATCH). Body: { steps?, businessGroups?, description?, leadSource?, parcels? }.\n' +
         'Each item in steps:\n' +
         '  { "uid": "<existing>", "config": {...} }   merge config (JSON Merge Patch: null resets a key to its default)\n' +
         '  { "uid": "<existing>", "replaceConfig": true, "config": {...} }   replace config\n' +
@@ -86,14 +88,23 @@ export function registerSatvoltPipelineCommands(satvolt: Command): void {
         '  { "uid": "<existing>", "after": "<uid>" }  move (also "before")\n' +
         '  { "uid": "<existing>", "remove": true }\n' +
         '  { "action": "QUALIFY", "config": {...} }   add (before COMPLETE, or before/after a uid)\n' +
-        'Example:\n' +
-        '  suntropy satvolt config patch 59 --data \'{"steps":[{"uid":"d3f2849c52281f36","config":{"enableWebSearch":true}}]}\'',
+        '\n' +
+        PARCELS_HELP +
+        '  Lead source and parcel filters only change while the campaign is queued (409\n' +
+        '  CAMPAIGN_STARTED otherwise). Parcel filters alone imply cadastral_parcels.\n\n' +
+        'Examples:\n' +
+        '  suntropy satvolt config patch 59 --data \'{"steps":[{"uid":"d3f2849c52281f36","config":{"enableWebSearch":true}}]}\'\n' +
+        '  suntropy satvolt config patch 71 --parcel-uses residential --parcel-min-area 300\n' +
+        '  suntropy satvolt config patch 71 --lead-source google_places   (back to Maps businesses)',
     )
-    .requiredOption('--data <json>', 'Patch JSON, @file or -')
+    .option('--data <json>', 'Patch JSON, @file or -; the flags below override its fields');
+  addParcelOptions(config.commands[config.commands.length - 1], { clearable: true })
     .action(async (campaignId, opts) => {
       const global = getGlobalOpts(config);
       try {
-        const body = readJsonArg(opts.data, '--data');
+        const body: Record<string, unknown> = opts.data ? readJsonArg(opts.data, '--data') : {};
+        applyParcelFields(opts, body);
+        if (Object.keys(body).length === 0) throw new Error('Nothing to change: pass --data or a lead source / parcel option');
         const data = await call(satvoltClient(global), 'patch', `/campaigns/${parseId(campaignId, 'campaignId')}/configuration`, {
           data: body,
         });
