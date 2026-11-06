@@ -13,6 +13,14 @@ import {
   satvoltError,
 } from './api.js';
 import { leadsFromOpts } from './lead-inputs.js';
+import {
+  PARCELS_HELP,
+  addParcelOptions,
+  applyParcelFields,
+  parcelEstimateSummary,
+  parcelSampleRows,
+  warnIfParcelsIgnored,
+} from './parcels.js';
 
 const TERMINAL_CAMPAIGN_STATES = new Set(['completed', 'failed', 'canceled']);
 
@@ -241,7 +249,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
   // --- create ---
   campaigns
     .command('create')
-    .summary('Create a Maps campaign over an area, optionally from a template or campaign.')
+    .summary('Create a Maps campaign over an area (businesses or cadastral parcels), optionally from a template.')
     .description(
       'Create a Maps campaign over an area. It stays queued unless --start is passed\n' +
         '(same as the web app). Steps are the LEAD steps only: SECTORIZE, FIND_LEADS\n' +
@@ -262,6 +270,11 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         'much, counting completed leads only. Keys: completedLeads, annualKwh, roofAreaM2\n' +
         '(see: satvolt catalog campaign-limits).\n' +
         '  --limit completedLeads=200 --limit annualKwh=50000000\n\n' +
+        PARCELS_HELP +
+        '  Run `campaigns estimate` with the same filters first (it takes 20-50 s).\n' +
+        '  suntropy satvolt campaigns create --name "Piscinas Las Rozas" \\\n' +
+        '    --circle 40.5150,-3.8930 --radius 800 --parcel-classes urban \\\n' +
+        '    --parcel-uses residential --parcel-min-area 300 --max-leads 200 --steps @geo-pools.json\n\n' +
         'Area (exactly one):\n' +
         '  --circle <lat,lng> --radius <meters>   stored as a circle (100 m - 50 km)\n' +
         '  --bounds <nwLat,nwLng,seLat,seLng>     rectangle\n' +
@@ -275,7 +288,8 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         '    --steps \'[{"action":"FIND_ROOFTOP"},{"action":"SOLAR_ANALYSIS"}]\' --start\n' +
         '  suntropy satvolt campaigns create --data @campaign.json   (full request body)\n\n' +
         'Base configuration (optional, one of them): steps, business groups, description,\n' +
-        'search query and lead limit come from it; any flag you pass wins.\n' +
+        'search query, lead limit and lead source (with its parcel filters) come from it;\n' +
+        'any flag you pass wins (--lead-source alone drops the base parcel filters).\n' +
         '  --template <id|name>     a campaign template (see: satvolt templates list)\n' +
         '  --from-campaign <id>     copy the pipeline of another Maps campaign\n' +
         'The export tables come along too: those of the template\'s source campaign, or of\n' +
@@ -305,11 +319,13 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .option('--address <text>', 'Reference address shown in the web app')
     .option('--region <text>', 'Region shown in the web app')
     .option('--start', 'Start the pipeline right after creating it (spends credits)')
-    .option('--data <json>', 'Full request body (JSON, @file or -); flags override its fields')
+    .option('--data <json>', 'Full request body (JSON, @file or -); flags override its fields');
+  addParcelOptions(campaigns.commands[campaigns.commands.length - 1])
     .action(async (opts) => {
       const global = getGlobalOpts(campaigns);
       try {
         const body: Record<string, unknown> = opts.data ? readJsonArg(opts.data, '--data') : {};
+        const parcelMode = applyParcelFields(opts, body);
         if (opts.name) body.name = opts.name;
         if (opts.circle !== undefined || opts.polygon !== undefined || opts.bounds !== undefined) {
           body.area = buildArea(opts);
@@ -348,6 +364,13 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         if (opts.start) body.start = true;
 
         const data = await call(satvoltClient(global), 'post', '/campaigns', { data: body });
+        if (parcelMode) {
+          const id = data?.campaign?.idCampaign ?? '<id>';
+          warnIfParcelsIgnored(
+            data?.configuration?.leadSource,
+            `campaign ${id} searches Google Maps businesses: delete it with \`campaigns delete ${id} --yes\``,
+          );
+        }
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
@@ -357,7 +380,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
   // --- estimate ---
   campaigns
     .command('estimate')
-    .summary('Count the businesses a campaign would find over an area, without creating it.')
+    .summary('Count the businesses (or cadastral parcels) a campaign would find over an area, without creating it.')
     .description(
       'Preview of FIND_LEADS: how many businesses Google Maps returns inside the area with\n' +
         'the given business groups (nearby search) or text query, plus a sample to inspect.\n' +
@@ -376,7 +399,15 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         '    --business-groups businesses --format human\n' +
         '  suntropy satvolt campaigns estimate --circle 43.3934,-3.8445 --radius 1500 \\\n' +
         '    --business-groups industrial_logistics,automotive --sample 50\n' +
-        '  suntropy satvolt campaigns estimate --bounds 40.45,-3.70,40.44,-3.68 --template "Industria"',
+        '  suntropy satvolt campaigns estimate --bounds 40.45,-3.70,40.44,-3.68 --template "Industria"\n\n' +
+        PARCELS_HELP +
+        '  The parcel estimate counts the real parcels of up to 8 tiles of 250 m spread over the\n' +
+        '  area and extrapolates (`parcels.estimated`, `exact`, `sampled.rejected`), with a sample\n' +
+        '  and `estimatedSweepCredits`. The Cadastre is slow: it takes 20-50 s. In an area that\n' +
+        '  mixes town and countryside the extrapolation is only an order of magnitude.\n' +
+        '  --template/--from-campaign do not bring the parcel filters here: pass them.\n' +
+        '  suntropy satvolt campaigns estimate --circle 40.5150,-3.8930 --radius 800 \\\n' +
+        '    --parcel-classes urban --parcel-uses residential --parcel-min-area 300 --format human',
     )
     .option('--circle <lat,lng>', 'Circle center')
     .option('--radius <meters>', 'Circle radius in meters')
@@ -387,11 +418,13 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
     .option('--business-groups <ids>', 'Comma-separated group ids or raw Google Places types. See: satvolt catalog business-groups')
     .option('--search-query <text>', 'Places text search with this query instead of nearby search (matches names, not categories)')
     .option('--sample <n>', 'Sample places to return (1-100, default 20)')
-    .option('--offset <n>', 'Skip this many sample places (to page through them)')
+    .option('--offset <n>', 'Skip this many sample places (to page through them)');
+  addParcelOptions(campaigns.commands[campaigns.commands.length - 1])
     .action(async (opts) => {
       const global = getGlobalOpts(campaigns);
       try {
         const body: Record<string, unknown> = { area: buildArea(opts) };
+        const parcelMode = applyParcelFields(opts, body);
         if (opts.template && opts.fromCampaign) throw new Error('Use either --template or --from-campaign, not both');
         if (opts.template) body.templateId = opts.template;
         if (opts.fromCampaign) body.fromCampaignId = parseId(opts.fromCampaign, '--from-campaign');
@@ -400,7 +433,19 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         if (opts.sample !== undefined) body.sample = parseIntOption(opts.sample, '--sample');
         if (opts.offset !== undefined) body.offset = parseIntOption(opts.offset, '--offset');
 
-        const data = await call(satvoltClient(global, 120000), 'post', '/campaigns/estimate', { data: body });
+        if (parcelMode && !global.quiet) {
+          process.stderr.write(chalk.dim('Counting parcels in the Cadastre: this takes 20-50 s…\n'));
+        }
+        // The parcel estimate can take close to a minute on the backend.
+        const data = await call(satvoltClient(global, parcelMode ? 180000 : 120000), 'post', '/campaigns/estimate', {
+          data: body,
+        });
+        if (parcelMode) warnIfParcelsIgnored(data?.leadSource, 'this is a Google Maps estimate');
+        if (parcelMode && data?.leadSource === 'cadastral_parcels' && global.format === 'human' && !global.fields) {
+          process.stderr.write(parcelEstimateSummary(data));
+          output(parcelSampleRows(data), global);
+          return;
+        }
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));

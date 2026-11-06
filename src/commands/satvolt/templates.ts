@@ -10,6 +10,7 @@ import {
   satvoltError,
 } from './api.js';
 import { collect, parseLimitPairs } from './campaigns.js';
+import { PARCELS_HELP, addParcelOptions, applyParcelFields, warnIfParcelsIgnored } from './parcels.js';
 
 /** --execution-mode, --sectors-in-flight and --limit, shared by create and patch. */
 function deliveryFields(opts: Record<string, any>, body: Record<string, unknown>): void {
@@ -32,7 +33,7 @@ function deliveryFields(opts: Record<string, any>, body: Record<string, unknown>
 }
 
 const TEMPLATE_LIST_FIELDS =
-  'id,name,description,steps,businessGroups,searchQuery,maxLeads,executionMode,limits,sourceCampaignId';
+  'id,name,description,steps,leadSource,businessGroups,searchQuery,maxLeads,executionMode,limits,sourceCampaignId';
 
 const splitList = (value: string) => value.split(',').map((s) => s.trim()).filter(Boolean);
 const templatePath = (idOrName: string) => `/campaign-templates/${encodeURIComponent(idOrName)}`;
@@ -48,7 +49,8 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
     .description(
       'Campaign templates keep everything that defines a campaign except its name and area:\n' +
         'pipeline steps (with their uids), business groups, configuration description, search\n' +
-        'query and lead limit. Reference them by id or by exact name.\n' +
+        'query, lead limit and lead source (Maps businesses or cadastral parcels, with the\n' +
+        'parcel filters). Reference them by id or by exact name.\n' +
         'Typical flow:\n' +
         '  satvolt templates create --name "Greenvolt industria" --from-campaign 62\n' +
         '  satvolt campaigns create --name "Sonda Elche" --template "Greenvolt industria" \\\n' +
@@ -100,7 +102,11 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
         'Examples:\n' +
         '  suntropy satvolt templates create --name "Greenvolt industria" --from-campaign 62\n' +
         '  suntropy satvolt templates create --name "Solo tejados" --steps \'[{"action":"FIND_ROOFTOP"}]\' --max-leads 100\n' +
-        '  suntropy satvolt templates create --data @template.json',
+        '  suntropy satvolt templates create --data @template.json\n' +
+        '  suntropy satvolt templates create --name "Piscinas" --steps @geo-pools.json \\\n' +
+        '    --parcel-classes urban --parcel-uses residential\n\n' +
+        PARCELS_HELP +
+        '  With --from-campaign the template keeps the lead source of that campaign.',
     )
     .option('--name <name>', 'Template name (unique in your company)')
     .option('--description <text>', 'What the template is for')
@@ -114,11 +120,13 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
     .option('--sectors-in-flight <n>', 'Sectors mode: sectors in progress at a time (1-20)')
     .option('--lead-batch-size <n>', 'Sectors mode: leads of a sector in the pipeline at a time (1-500)')
     .option('--limit <key=value>', 'Goal for campaigns created from it (repeatable). See: satvolt catalog campaign-limits', collect)
-    .option('--data <json>', 'Full request body (JSON, @file or -); flags override its fields')
+    .option('--data <json>', 'Full request body (JSON, @file or -); flags override its fields');
+  addParcelOptions(templates.commands[templates.commands.length - 1])
     .action(async (opts) => {
       const global = getGlobalOpts(templates);
       try {
         const body: Record<string, unknown> = opts.data ? readJsonArg(opts.data, '--data') : {};
+        const parcelMode = applyParcelFields(opts, body);
         if (opts.name) body.name = opts.name;
         if (opts.description !== undefined) body.description = opts.description;
         if (opts.fromCampaign) body.fromCampaignId = parseId(opts.fromCampaign, '--from-campaign');
@@ -132,7 +140,9 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
         if (body.fromCampaignId === undefined && body.steps === undefined) {
           throw new Error('Pass --from-campaign <id> or --steps <json>');
         }
-        output(await call(satvoltClient(global), 'post', '/campaign-templates', { data: body }), global);
+        const data = await call(satvoltClient(global), 'post', '/campaign-templates', { data: body });
+        if (parcelMode) warnIfParcelsIgnored(data?.leadSource, 'the template keeps searching Google Maps businesses');
+        output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
       }
@@ -168,7 +178,10 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
         'Examples:\n' +
         '  suntropy satvolt templates patch "Greenvolt industria" --max-leads 500\n' +
         '  suntropy satvolt templates patch "Greenvolt industria" --no-max-leads --business-groups businesses\n' +
-        '  suntropy satvolt templates patch <id> --steps \'[{"uid":"8771dae3f9637027","config":{"tariffTemplate":"6.1TD"}}]\'',
+        '  suntropy satvolt templates patch <id> --steps \'[{"uid":"8771dae3f9637027","config":{"tariffTemplate":"6.1TD"}}]\'\n' +
+        '  suntropy satvolt templates patch "Piscinas" --parcel-min-area 500\n' +
+        '  suntropy satvolt templates patch "Piscinas" --lead-source google_places\n\n' +
+        PARCELS_HELP,
     )
     .option('--name <name>', 'Rename the template')
     .option('--description <text>', 'New description')
@@ -183,11 +196,13 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
     .option('--lead-batch-size <n>', 'Sectors mode: leads of a sector in the pipeline at a time (1-500)')
     .option('--limit <key=value>', 'Goals (repeatable); replaces all the goals of the template', collect)
     .option('--no-limits', 'Remove the goals of the template')
-    .option('--data <json>', 'Patch body (JSON, @file or -); flags override its fields')
+    .option('--data <json>', 'Patch body (JSON, @file or -); flags override its fields');
+  addParcelOptions(templates.commands[templates.commands.length - 1], { clearable: true })
     .action(async (idOrName, opts) => {
       const global = getGlobalOpts(templates);
       try {
         const body: Record<string, unknown> = opts.data ? readJsonArg(opts.data, '--data') : {};
+        const parcelMode = applyParcelFields(opts, body);
         if (opts.name) body.name = opts.name;
         if (opts.description !== undefined) body.description = opts.description;
         if (opts.steps) body.steps = readJsonArg(opts.steps, '--steps');
@@ -199,7 +214,9 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
         else if (opts.maxLeads !== undefined && opts.maxLeads !== true) body.maxLeads = parseIntOption(opts.maxLeads, '--max-leads');
         deliveryFields(opts, body);
         if (Object.keys(body).length === 0) throw new Error('Nothing to change: pass at least one option');
-        output(await call(satvoltClient(global), 'patch', templatePath(idOrName), { data: body }), global);
+        const data = await call(satvoltClient(global), 'patch', templatePath(idOrName), { data: body });
+        if (parcelMode) warnIfParcelsIgnored(data?.leadSource, 'the template keeps searching Google Maps businesses');
+        output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
       }
