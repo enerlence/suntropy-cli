@@ -225,3 +225,18 @@ export function parcelSampleRows(data: any): Record<string, unknown>[] {
     location: p.location ? `${Number(p.location.lat).toFixed(5)},${Number(p.location.lng).toFixed(5)}` : null,
   }));
 }
+
+/**
+ * A backend without the parcel mode ignores `leadSource` and `parcels` and
+ * answers as for Google Maps. Warn instead of letting it pass silently.
+ * `appliedSource` is the `leadSource` the server echoed back.
+ */
+export function warnIfParcelsIgnored(appliedSource: unknown, what: string): void {
+  if (appliedSource === 'cadastral_parcels') return;
+  process.stderr.write(
+    chalk.yellow(
+      `! The server did not apply the cadastral parcel mode (leadSource: ${String(appliedSource ?? 'missing')}): ` +
+        `it probably does not support it yet, so ${what}.\n`,
+    ),
+  );
+}

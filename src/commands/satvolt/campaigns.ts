@@ -19,6 +19,7 @@ import {
   applyParcelFields,
   parcelEstimateSummary,
   parcelSampleRows,
+  warnIfParcelsIgnored,
 } from './parcels.js';
 
 const TERMINAL_CAMPAIGN_STATES = new Set(['completed', 'failed', 'canceled']);
@@ -324,7 +325,7 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
       const global = getGlobalOpts(campaigns);
       try {
         const body: Record<string, unknown> = opts.data ? readJsonArg(opts.data, '--data') : {};
-        applyParcelFields(opts, body);
+        const parcelMode = applyParcelFields(opts, body);
         if (opts.name) body.name = opts.name;
         if (opts.circle !== undefined || opts.polygon !== undefined || opts.bounds !== undefined) {
           body.area = buildArea(opts);
@@ -363,6 +364,13 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         if (opts.start) body.start = true;
 
         const data = await call(satvoltClient(global), 'post', '/campaigns', { data: body });
+        if (parcelMode) {
+          const id = data?.campaign?.idCampaign ?? '<id>';
+          warnIfParcelsIgnored(
+            data?.configuration?.leadSource,
+            `campaign ${id} searches Google Maps businesses: delete it with \`campaigns delete ${id} --yes\``,
+          );
+        }
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
@@ -432,7 +440,8 @@ export function registerSatvoltCampaignCommands(satvolt: Command): void {
         const data = await call(satvoltClient(global, parcelMode ? 180000 : 120000), 'post', '/campaigns/estimate', {
           data: body,
         });
-        if (parcelMode && global.format === 'human' && !global.fields) {
+        if (parcelMode) warnIfParcelsIgnored(data?.leadSource, 'this is a Google Maps estimate');
+        if (parcelMode && data?.leadSource === 'cadastral_parcels' && global.format === 'human' && !global.fields) {
           process.stderr.write(parcelEstimateSummary(data));
           output(parcelSampleRows(data), global);
           return;

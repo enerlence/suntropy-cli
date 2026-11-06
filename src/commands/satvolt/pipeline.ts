@@ -8,7 +8,7 @@ import {
   satvoltClient,
   satvoltError,
 } from './api.js';
-import { PARCELS_HELP, addParcelOptions, applyParcelFields } from './parcels.js';
+import { PARCELS_HELP, addParcelOptions, applyParcelFields, warnIfParcelsIgnored } from './parcels.js';
 
 const STEP_LIST_FIELDS = 'index,uid,action,name,disable,creditCost,executedLeads,runnable,reason';
 
@@ -103,11 +103,12 @@ export function registerSatvoltPipelineCommands(satvolt: Command): void {
       const global = getGlobalOpts(config);
       try {
         const body: Record<string, unknown> = opts.data ? readJsonArg(opts.data, '--data') : {};
-        applyParcelFields(opts, body);
+        const parcelMode = applyParcelFields(opts, body);
         if (Object.keys(body).length === 0) throw new Error('Nothing to change: pass --data or a lead source / parcel option');
         const data = await call(satvoltClient(global), 'patch', `/campaigns/${parseId(campaignId, 'campaignId')}/configuration`, {
           data: body,
         });
+        if (parcelMode) warnIfParcelsIgnored(data?.leadSource, 'the campaign still searches Google Maps businesses');
         output(data, global);
       } catch (err) {
         outputError(satvoltError(err));

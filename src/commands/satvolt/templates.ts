@@ -10,7 +10,7 @@ import {
   satvoltError,
 } from './api.js';
 import { collect, parseLimitPairs } from './campaigns.js';
-import { PARCELS_HELP, addParcelOptions, applyParcelFields } from './parcels.js';
+import { PARCELS_HELP, addParcelOptions, applyParcelFields, warnIfParcelsIgnored } from './parcels.js';
 
 /** --execution-mode, --sectors-in-flight and --limit, shared by create and patch. */
 function deliveryFields(opts: Record<string, any>, body: Record<string, unknown>): void {
@@ -126,7 +126,7 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
       const global = getGlobalOpts(templates);
       try {
         const body: Record<string, unknown> = opts.data ? readJsonArg(opts.data, '--data') : {};
-        applyParcelFields(opts, body);
+        const parcelMode = applyParcelFields(opts, body);
         if (opts.name) body.name = opts.name;
         if (opts.description !== undefined) body.description = opts.description;
         if (opts.fromCampaign) body.fromCampaignId = parseId(opts.fromCampaign, '--from-campaign');
@@ -140,7 +140,9 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
         if (body.fromCampaignId === undefined && body.steps === undefined) {
           throw new Error('Pass --from-campaign <id> or --steps <json>');
         }
-        output(await call(satvoltClient(global), 'post', '/campaign-templates', { data: body }), global);
+        const data = await call(satvoltClient(global), 'post', '/campaign-templates', { data: body });
+        if (parcelMode) warnIfParcelsIgnored(data?.leadSource, 'the template keeps searching Google Maps businesses');
+        output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
       }
@@ -200,7 +202,7 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
       const global = getGlobalOpts(templates);
       try {
         const body: Record<string, unknown> = opts.data ? readJsonArg(opts.data, '--data') : {};
-        applyParcelFields(opts, body);
+        const parcelMode = applyParcelFields(opts, body);
         if (opts.name) body.name = opts.name;
         if (opts.description !== undefined) body.description = opts.description;
         if (opts.steps) body.steps = readJsonArg(opts.steps, '--steps');
@@ -212,7 +214,9 @@ export function registerSatvoltTemplateCommands(satvolt: Command): void {
         else if (opts.maxLeads !== undefined && opts.maxLeads !== true) body.maxLeads = parseIntOption(opts.maxLeads, '--max-leads');
         deliveryFields(opts, body);
         if (Object.keys(body).length === 0) throw new Error('Nothing to change: pass at least one option');
-        output(await call(satvoltClient(global), 'patch', templatePath(idOrName), { data: body }), global);
+        const data = await call(satvoltClient(global), 'patch', templatePath(idOrName), { data: body });
+        if (parcelMode) warnIfParcelsIgnored(data?.leadSource, 'the template keeps searching Google Maps businesses');
+        output(data, global);
       } catch (err) {
         outputError(satvoltError(err));
       }
