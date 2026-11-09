@@ -354,6 +354,11 @@ suntropy satvolt campaigns create --name "Cobo Calleja" --circle 40.2597,-3.7545
 suntropy satvolt campaigns create --name "Test" --polygon @area.geojson --steps @steps.json
 suntropy satvolt campaigns create --name "Sonda" --template "Industria" --circle 37.35,-6.27 --radius 5000 --max-leads 50
 suntropy satvolt campaigns create --name "Copia" --from-campaign 62 --bounds 40.45,-3.70,40.44,-3.68
+# Cadastral parcel campaigns: one lead per parcel (pools, built vs declared area, plots)
+suntropy satvolt campaigns estimate --circle 40.515,-3.893 --radius 800 \
+  --parcel-classes urban --parcel-uses residential --parcel-min-area 300 --format human   # 20-50 s
+suntropy satvolt campaigns create --name "Piscinas" --circle 40.515,-3.893 --radius 800 \
+  --parcels @parcels.json --max-leads 200 --steps @geo-pools.json
 suntropy satvolt campaigns start <id>
 suntropy satvolt campaigns logs <id> --follow --format human
 suntropy satvolt campaigns funnel <id>
@@ -375,6 +380,7 @@ suntropy satvolt templates delete "Industria" --yes
 suntropy satvolt config get <id> --save pipeline.json
 suntropy satvolt config update <id> --data @pipeline.json      # full replace
 suntropy satvolt config patch <id> --data @patch.json          # merge by step uid
+suntropy satvolt config patch <id> --parcel-min-area 500         # parcel filters, only while queued
 suntropy satvolt steps list <id>
 suntropy satvolt steps add <id> --action QUALIFY --config '{"qualificationDefinition":"..."}'
 suntropy satvolt steps set <id> <uid> --config '{"enableWebSearch":true}'
@@ -400,7 +406,11 @@ suntropy satvolt export-tables data <tableId> --format csv
 suntropy satvolt export-tables export <tableId> --file-format xlsx --out leads.xlsx
 ```
 
-JSON arguments (`--steps`, `--config`, `--data`, `--columns`, `--polygon`) accept
+Parcel campaigns (`--lead-source cadastral_parcels`, implied by `--parcels` or any
+`--parcel-*` flag) work in `campaigns create|estimate`, `config patch` and
+`templates create|patch`; see `suntropy satvolt campaigns create --help`.
+
+JSON arguments (`--steps`, `--config`, `--data`, `--columns`, `--polygon`, `--parcels`) accept
 inline JSON, `@file.json` or `-` for stdin. Errors keep the API `code` and
 validation `details` (step index, uid and field). `reset` and `delete` are in the
 `delete` permission tier; `start`, `resume`, `run`, `run-step`, `extend`, `patch`
