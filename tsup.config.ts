@@ -14,6 +14,12 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   splitting: false,
+  // energy-types arrastra typeorm, mongoose, NestJS y mysql (~150 paquetes,
+  // 80 MB) y la CLI solo usa PowerCurve y applyProfileToConsumption, que no
+  // importan nada de fuera. Va dentro del bundle y deja de ser dependencia: la
+  // instalación en un sandbox de Devic tardaba ~190 s y no cabía en los 110 s
+  // del operator.
+  noExternal: ['energy-types'],
   define: {
     __CLI_VERSION__: JSON.stringify(pkg.version),
   },
