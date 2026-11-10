@@ -2,6 +2,14 @@
   "name": "@enerlence/suntropy-cli",
   "version": "0.18.1",
   "description": "Agent-first CLI for Suntropy solar platform",
+  "homepage": "https://suntropy.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enerlence/suntropy-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/enerlence/suntropy-cli/issues"
+  },
   "type": "module",
   "bin": {
     "suntropy": "./dist/bin/suntropy.js"
@@ -14,13 +22,17 @@
     "build": "tsup",
     "dev": "tsx bin/suntropy.ts",
     "start": "node dist/bin/suntropy.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "keywords": [
     "suntropy",
     "solar",
     "cli",
-    "agent"
+    "agent",
+    "mcp",
+    "solar-monitoring",
+    "inverters"
   ],
   "license": "UNLICENSED",
   "dependencies": {
