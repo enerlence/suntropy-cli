@@ -431,6 +431,74 @@ suntropy config create-profile staging
 suntropy config use staging
 ```
 
+## Suntropy Connect (monitorización de inversores)
+
+`suntropy connect` habla con el gateway de Suntropy Connect
+(`https://connect-gateway.suntropy.ai`), no con la API de Suntropy: su sesión es
+independiente de `suntropy auth` y se guarda en `profiles.<perfil>.connect` de
+`~/.suntropy/config.json` (con permisos 0600). Respeta el `--profile` global.
+
+### Login o alta sin contraseña
+
+```bash
+# Por correo (recomendado para agentes): si el correo no tiene cuenta, se crea
+suntropy connect login --email ana@instaladora.es --utm-campaign alarmas-growatt
+suntropy connect login --code 482913          # el código de 6 dígitos que le ha llegado
+
+# Por enlace: el usuario aprueba en app.suntropy.ai con su sesión
+suntropy connect login                         # devuelve verificationUriComplete y userCode
+suntropy connect login --continue              # espera la aprobación y guarda la sesión
+
+suntropy connect status                        # sin mostrar tokens
+suntropy connect logout
+```
+
+Sin terminal (un agente) los comandos no se quedan esperando: devuelven el siguiente paso en
+`next`. Con terminal, `login` espera la aprobación o pide el código. Si la cuenta no tiene
+licencia de Connect, `--code` responde `licence_inactive` con el enlace para empezar la
+prueba de 7 días en el navegador; después, `--continue`. El token se renueva solo (refresh
+rotatorio). `SUNTROPY_CONNECT_TOKEN` sustituye a la sesión guardada.
+
+### Lecturas (MCP de monitorización)
+
+```bash
+suntropy connect summary                       # empieza aquí
+suntropy connect connections
+suntropy connect plants --query "Pérez"
+suntropy connect plant-status <plantId> <plantId>
+suntropy connect energy <plantId> --metric pv_yield --granularity day --from 2026-11-01
+suntropy connect power-curve <plantId> --date 2026-11-09
+suntropy connect devices <plantId>
+suntropy connect device-realtime <deviceId>
+suntropy connect device-history <deviceId> --from 2026-11-09T00:00:00+01:00 --to 2026-11-10T00:00:00+01:00
+suntropy connect alarms --min-severity major --unread-only
+suntropy connect alarms watch get
+suntropy connect alarms watch set --enabled true --provider all
+suntropy connect tools                         # todas las herramientas
+suntropy connect call <herramienta> --args '{"…":"…"}'
+```
+
+### Conectar cuentas de fabricantes
+
+```bash
+suntropy connect add huawei --label "Cliente Pérez"      # enlace: el agente no ve las credenciales
+suntropy connect link-status <id> --wait
+suntropy connect catalog huawei                          # campos de la marca, sin valores
+suntropy connect add huawei --field host=eu5.fusionsolar.huawei.com --field username=api --field password
+# (directa: los secretos sin valor se piden ocultos, o una línea por secreto en stdin)
+```
+
+### MCP en clientes de IA
+
+```bash
+suntropy mcp add --client claude-code     # ejecuta `claude mcp add --transport http …`
+suntropy mcp add --client codex           # `codex mcp add … --url …` y luego `codex mcp login`
+suntropy mcp add --client cursor          # escribe ~/.cursor/mcp.json
+suntropy mcp add --client claude-ai       # enlace de alta del conector y pasos
+suntropy mcp add --client chatgpt         # pasos (modo desarrollador)
+# --print para no tocar nada; --brand huawei para el MCP de una sola marca
+```
+
 ## Configuration
 
 Config stored in `~/.suntropy/config.json`. Supports multiple profiles for different environments.
@@ -470,3 +538,4 @@ Available skills:
 - **satvolt-probe-to-full-campaign** - Probe campaign from a template, validate, fix and extend to the whole area
 - **satvolt-named-leads** - Analyse 1-10 specific companies given by name (e.g. an inbound lead), running the steps one by one
 - **satvolt-lead-troubleshooting** - Diagnose failing steps and re-run them on leads
+- **connect-monitoring** - `suntropy connect`: login sin contraseña, plantas, alarmas y alta de cuentas de fabricantes
