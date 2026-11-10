@@ -1,6 +1,6 @@
 {
   "name": "@enerlence/suntropy-cli",
-  "version": "0.18.1",
+  "version": "0.19.0",
   "description": "Agent-first CLI for Suntropy solar platform",
   "homepage": "https://suntropy.ai",
   "repository": {
