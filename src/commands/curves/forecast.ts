@@ -31,15 +31,28 @@ function num(v: string | undefined, name: string): number | undefined {
   return n;
 }
 
+const isPair = (x: unknown) => Array.isArray(x) && x.length === 2 && typeof x[0] === 'string';
+
+/**
+ * Qué se ha pasado: una serie `[periodo, valor]` (la salida de `suntropy connect
+ * energy`, con `points`, o directamente la lista de pares) o una PowerCurve.
+ */
+export function inputKind(data: unknown): { series: unknown } | { curve: unknown } {
+  if (Array.isArray(data) && data.length && data.every(isPair)) return { series: data };
+  const points = (data as any)?.points;
+  if (Array.isArray(points) && points.length && points.every(isPair)) return { series: points };
+  return { curve: data };
+}
+
 /** El cuerpo de la petición. Valida lo que no necesita al servidor; el resto lo valida Solar. */
-export function buildForecastBody(curve: unknown, o: ForecastCliOptions): Record<string, unknown> {
+export function buildForecastBody(input: unknown, o: ForecastCliOptions): Record<string, unknown> {
   if (o.mode && !['forecast', 'backtest'].includes(o.mode)) throw new Error('--mode must be forecast or backtest');
   if (o.granularity && !['day', 'hour'].includes(o.granularity)) throw new Error('--granularity must be day or hour');
   if (o.covariate && !['none', 'irradiance'].includes(o.covariate)) throw new Error('--covariate must be none or irradiance');
   if ((o.lat === undefined) !== (o.lon === undefined)) throw new Error('--lat and --lon go together');
   const horizon = num(o.horizon, 'horizon');
   if (horizon !== undefined && !Number.isInteger(horizon)) throw new Error('--horizon must be an integer');
-  const body: Record<string, unknown> = { curve };
+  const body: Record<string, unknown> = { ...inputKind(input) };
   if (o.mode) body.mode = o.mode;
   if (o.granularity) body.granularity = o.granularity;
   if (horizon !== undefined) body.horizon = horizon;

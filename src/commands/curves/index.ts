@@ -229,6 +229,7 @@ export function registerCurvesCommands(program: Command): void {
     .command('forecast')
     .description(
       'Forecast any PowerCurve (production, consumption…) with TimesFM 3.0 (Suntropy API).\n' +
+      'The input can also be a [period, value] series, e.g. the output of `suntropy connect energy` (daily or hourly).\n' +
       'forecast: predicts the next days/hours after the end of the curve, with a p10-p90 band.\n' +
       'backtest: hides the last points, predicts them and compares (MAE, WAPE, band coverage, possible anomalies).\n' +
       'For production curves pass --lat/--lon: the solar irradiance (Open-Meteo, real + 16-day forecast) is used as covariate.\n' +
@@ -237,7 +238,9 @@ export function registerCurvesCommands(program: Command): void {
       '  suntropy curves forecast --input production.json --lat 36.72 --lon -4.42 --horizon 7\n' +
       '  suntropy curves forecast --input production.json --granularity hour --horizon 48 --lat 36.72 --lon -4.42 --output median > next48h.json\n' +
       '  suntropy curves forecast --input consumption.json --granularity hour --mode backtest --horizon 72 --output metrics\n' +
-      '  suntropy studies curves <studyId> consumption | suntropy curves forecast --horizon 14'
+      '  suntropy studies curves <studyId> consumption | suntropy curves forecast --horizon 14\n' +
+      '  suntropy connect energy <plantId> --metric pv_yield --granularity day --from 2025-11-01 --to 2026-11-12 \\\n' +
+      '    | suntropy curves forecast --mode backtest --horizon 10 --lat 36.66 --lon -4.50 --output points'
     )
     .option('--input <file>', 'Input PowerCurve file (or - for stdin)')
     .option('--mode <mode>', 'forecast | backtest (default forecast)')

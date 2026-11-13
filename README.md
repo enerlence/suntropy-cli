@@ -212,7 +212,8 @@ suntropy curves subtract --a prod.json --b cons.json \
 
 #### `suntropy curves forecast` - Forecast any curve (TimesFM 3.0)
 
-Predicts the next days or hours of any PowerCurve (production, consumption…) with
+Predicts the next days or hours of any PowerCurve (production, consumption…), or of a
+`[period, value]` series such as the output of `suntropy connect energy`, with
 a p10-p90 band, or backtests its last points against the real values. Runs on the
 Suntropy API (`POST /solar/api/forecast/power-curve`, also `POST /api/v2/forecasts/power-curve`).
 It is a read command: nothing is stored on the account, and results are kept 7 days
@@ -225,6 +226,10 @@ suntropy curves forecast --input production.json --lat 36.72 --lon -4.42 --horiz
 # Hourly, and only the median as a PowerCurve to keep piping
 suntropy curves forecast --input production.json --granularity hour --horizon 48 \
   --lat 36.72 --lon -4.42 --output median | suntropy curves total
+
+# A Suntropy Connect plant, straight from its daily energy (no hourly data from the manufacturer)
+suntropy connect energy <plantId> --metric pv_yield --granularity day --from 2025-11-01 --to 2026-11-12 \
+  | suntropy curves forecast --mode backtest --horizon 10 --lat 36.66 --lon -4.50 --output metrics
 
 # Consumption (no covariate): backtest the last 72 hours and print the error
 suntropy curves forecast --input consumption.json --granularity hour --mode backtest --horizon 72 --output metrics
