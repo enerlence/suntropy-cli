@@ -516,6 +516,20 @@ suntropy connect tools                         # todas las herramientas
 suntropy connect call <herramienta> --args '{"…":"…"}'
 ```
 
+### Pronóstico de una planta (TimesFM 3.0)
+
+```bash
+suntropy connect forecast <plantId>                         # backtest: últimos 30 días predichos sin verlos frente a lo real
+suntropy connect forecast <plantId> --mode forecast         # próximos 7 días (hasta 16)
+suntropy connect forecast <plantId> --mode forecast --horizon 14 --days   # con el detalle día a día
+```
+
+Devuelve, para la ventana:
+- `production`: lo esperado por TimesFM con la irradiación de cada día (Open-Meteo), lo real y los días anómalos (backtest), y `lastYear`: irradiación × kWh/MJ de las mismas fechas del año pasado (±10 días), una referencia sin modelo.
+- `consumption` (solo con contador): consumo esperado (TimesFM, dos años de consumo diario), la media del mismo periodo del año pasado o del mes anterior, y `balance`: autoconsumo estimado = `overlapFactor` × min(producción, consumo) cada día, con el factor del periodo de referencia; excedente = producción − autoconsumo; comprado a red = consumo − autoconsumo. En backtest, frente al real.
+
+Necesita las dos sesiones: `suntropy connect login` (o `SUNTROPY_CONNECT_TOKEN`) para los datos de la planta y `suntropy auth` (o `SUNTROPY_API_KEY`) para el modelo. Si el gateway no da las coordenadas, `--lat`/`--lon`.
+
 ### Conectar cuentas de fabricantes
 
 ```bash

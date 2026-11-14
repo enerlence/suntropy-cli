@@ -23,6 +23,44 @@ import {
   verifyEmailCode,
 } from '../../connect/login.js';
 import { ask, isInteractive, sleep } from '../../connect/prompt.js';
+import { createServiceClient, handleApiError, type ClientOptions } from '../../client.js';
+import {
+  addDays,
+  consumptionBalance,
+  countValues,
+  dayList,
+  lastYearExpected,
+  pairsToMap,
+  productionSummary,
+  windowFor,
+  type DayRow,
+  type ModelPoint,
+  type PlantForecastMode,
+} from '../../connect/plant-forecast.js';
+
+/** Irradiación diaria (MJ/m²) de Open-Meteo: archivo para lo pasado y previsión para lo reciente y lo futuro (16 días). */
+async function dailyIrradiance(lat: number, lon: number, from: string, to: string, today: string): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  const q = (base: string, f: string, t: string) =>
+    `${base}?latitude=${lat}&longitude=${lon}&daily=shortwave_radiation_sum&timezone=auto&start_date=${f}&end_date=${t}`;
+  const put = (j: any, onlyMissing: boolean) =>
+    (j?.daily?.time || []).forEach((d: string, i: number) => {
+      const v = j.daily.shortwave_radiation_sum[i];
+      if (onlyMissing && out.get(d) != null) return;
+      if (v !== null || !out.has(d)) out.set(d, v);
+    });
+  const archiveTo = [to, addDays(today, -6)].sort()[0];
+  if (from <= archiveTo) {
+    const r = await fetch(q('https://archive-api.open-meteo.com/v1/archive', from, archiveTo));
+    if (r.ok) put(await r.json(), false);
+  }
+  const recentFrom = [from, addDays(today, -60)].sort()[1];
+  if (recentFrom <= to) {
+    const r = await fetch(q('https://api.open-meteo.com/v1/forecast', recentFrom, to));
+    if (r.ok) put(await r.json(), true);
+  }
+  return out;
+}
 
 type GlobalOpts = OutputOptions & { profile?: string; verbose?: boolean };
 
@@ -497,6 +535,137 @@ export function registerConnectCommands(program: Command): void {
         }
       } catch (err) {
         fail(err);
+      }
+    });
+
+  // ─── pronóstico ───────────────────────────────────────────────────────
+  connect
+    .command('forecast <plantId>')
+    .summary('Producción, consumo, autoconsumo y excedente esperados de una planta (TimesFM 3.0)')
+    .description(
+      'Producción, consumo, autoconsumo y excedente de una planta con TimesFM 3.0, como la tarjeta\n' +
+        '«Pronóstico de producción» de Suntropy, y también hacia delante.\n' +
+        '  backtest (por defecto): esconde los últimos N días (30), los predice sin verlos y los compara con lo real.\n' +
+        '  forecast: predice los próximos N días (7; 16 como mucho, lo que llega la irradiación prevista).\n' +
+        'Producción con la irradiación de Open-Meteo de covariable; consumo sin covariable (dos años de consumo diario:\n' +
+        've el mismo mes del año pasado y el anterior). Referencias sin modelo: producción «según el año pasado»\n' +
+        '(irradiación × kWh/MJ de esas fechas del año pasado) y consumo medio del mismo periodo del año pasado o del\n' +
+        'mes anterior. Autoconsumo estimado = f × min(producción, consumo), con f el del periodo de referencia.\n' +
+        'Consumo y balance solo en plantas con contador. Necesita las dos sesiones: `suntropy connect login` (datos\n' +
+        'de la planta) y `suntropy auth` (el modelo, en la API de Suntropy).\n' +
+        'Ej.: suntropy connect forecast huawei:7dbe14e2:NE=1 --mode forecast --horizon 7',
+    )
+    .option('--mode <m>', 'backtest | forecast', 'backtest')
+    .option('--horizon <n>', 'Días a predecir (backtest 30 por defecto, hasta 60; forecast 7, hasta 16)', intOpt)
+    .option('--history <n>', 'Días de histórico que se descargan (60-740, 730 por defecto)', intOpt)
+    .option('--lat <latitud>', 'Latitud, si el gateway no la da')
+    .option('--lon <longitud>', 'Longitud, si el gateway no la da')
+    .option('--no-consumption', 'Solo producción (no pide consumo, autoconsumo ni vertido)')
+    .option('--refresh', 'Recalcular el modelo en vez de usar el resultado guardado (7 días)')
+    .option('--days', 'Incluir el detalle día a día')
+    .action(async (plantId: string, o) => {
+      try {
+        const { ctx, global } = ctxOf();
+        const mode = o.mode as PlantForecastMode;
+        if (mode !== 'backtest' && mode !== 'forecast') throw new Error('--mode es backtest o forecast');
+        const horizon = o.horizon ?? (mode === 'backtest' ? 30 : 7);
+        if (horizon < 1 || horizon > (mode === 'backtest' ? 60 : 16)) throw new Error(`--horizon fuera de rango para ${mode}`);
+        const historyDays = o.history ?? 730;
+        if (historyDays < 60 || historyDays > 740) throw new Error('--history entre 60 y 740 días');
+        const today = new Date().toISOString().slice(0, 10);
+        const w = windowFor(mode, horizon, historyDays, today);
+
+        // La planta: nombre y coordenadas.
+        let lat = o.lat !== undefined ? Number(o.lat) : null;
+        let lon = o.lon !== undefined ? Number(o.lon) : null;
+        let name: string | null = null;
+        const pr = await authedRequest(ctx, 'GET', `/integrations/monitoring/plants/${encodeURIComponent(plantId)}`).catch(() => null);
+        const plant = pr && pr.status === 200 ? (pr.data as any)?.plant : null;
+        if (plant) {
+          name = plant.name ?? null;
+          if (lat === null && typeof plant.latitude === 'number') lat = plant.latitude;
+          if (lon === null && typeof plant.longitude === 'number') lon = plant.longitude;
+        }
+        if (lat === null || lon === null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+          throw new ConnectError('No hay coordenadas de la planta: pásalas con --lat y --lon.', 'no_coordinates');
+        }
+
+        // Los datos diarios: una llamada por métrica (730 días caben en una respuesta).
+        const metric = async (m: string) =>
+          pairsToMap(((await callTool(ctx, 'get_plant_energy', { plantId, metric: m, granularity: 'day', from: w.historyFrom, to: w.historyTo })) as any)?.points);
+        const prod = await metric('pv_yield');
+        if (countValues(prod) < 60) throw new ConnectError('Hacen falta 60 días con producción.', 'not_enough_history');
+        let cons = new Map<string, number | null>();
+        let self = new Map<string, number | null>();
+        let exp = new Map<string, number | null>();
+        if (o.consumption !== false) {
+          cons = await metric('consumption').catch(() => new Map());
+          if (countValues(cons) >= 30) {
+            [self, exp] = await Promise.all([metric('self_consumption').catch(() => new Map()), metric('grid_export').catch(() => new Map())]);
+          } else cons = new Map();
+        }
+        const irr = await dailyIrradiance(lat, lon, w.historyFrom, w.to, today).catch(() => new Map<string, number | null>());
+        const rows: DayRow[] = dayList(w.historyFrom, w.historyTo).map((d) => ({
+          d,
+          prod: prod.get(d) ?? null,
+          cons: cons.get(d) ?? null,
+          self: self.get(d) ?? null,
+          exp: exp.get(d) ?? null,
+          irr: irr.get(d) ?? null,
+        }));
+
+        // El modelo, en la API de Suntropy.
+        const solar = createServiceClient('solar', global as ClientOptions);
+        const model = async (series: Array<[string, number]>, covariate: boolean) => {
+          const body: Record<string, unknown> = { series, mode, granularity: 'day', horizon };
+          if (covariate) Object.assign(body, { latitude: lat, longitude: lon, covariate: 'irradiance' });
+          else body.covariate = 'none';
+          if (o.refresh) body.refresh = true;
+          const res = await solar.post('/api/forecast/power-curve', body, { timeout: 180000 });
+          const env = res.data as any;
+          if (env?.error || (env?.code && env.code >= 400)) throw new Error(env?.error?.message || env?.error?.code || 'Forecast error');
+          return ((env?.data ?? env)?.forecast || []) as ModelPoint[];
+        };
+        const pairs = (m: Map<string, number | null>) =>
+          rows.filter((r) => m.get(r.d) !== null && m.get(r.d) !== undefined).map((r) => [r.d, m.get(r.d) as number] as [string, number]);
+        const hasCons = countValues(cons) >= 30;
+        const [prodModel, consModel] = await Promise.all([model(pairs(prod), true), hasCons ? model(pairs(cons), false) : Promise.resolve([] as ModelPoint[])]);
+        const days = dayList(w.from, w.to);
+        const ly = lastYearExpected(rows, days, (d) => irr.get(d) ?? null);
+        const result: Record<string, unknown> = {
+          plant: { id: plantId, name, latitude: lat, longitude: lon },
+          mode,
+          window: { from: w.from, to: w.to, days: days.length },
+          history: { from: w.historyFrom, to: w.historyTo, productionDays: countValues(prod), consumptionDays: countValues(cons) },
+          production: { ...productionSummary(rows, days, prodModel, mode), lastYear: ly ? { expectedKwh: ly.expectedKwh, realKwh: ly.realKwh, ratio: ly.ratio } : null },
+          consumption: hasCons ? (({ days: _d, ...c }) => c)(consumptionBalance(rows, days, consModel, prodModel, mode)) : null,
+          notes: [
+            'production.expectedKwh: TimesFM 3.0 con la irradiación de cada día' + (mode === 'backtest' ? ', sin ver la ventana.' : ' (prevista).'),
+            'production.lastYear: irradiación × kWh/MJ de las mismas fechas del año pasado (±10 días).',
+            hasCons ? 'consumption.balance: autoconsumo = overlapFactor × min(producción, consumo) cada día; excedente = producción − autoconsumo.' : 'Sin consumo: la planta no tiene contador o la marca no lo da.',
+          ],
+        };
+        if (o.days) {
+          const pm = new Map(prodModel.map((p) => [p.date, p]));
+          const cm = new Map(consModel.map((p) => [p.date, p]));
+          const lyd = new Map((ly?.points || []).map((p) => [p.date, p.kwh]));
+          result.days = days.map((d) => {
+            const r = rows.find((x) => x.d === d);
+            return {
+              date: d,
+              production: pm.get(d) ? { p: pm.get(d)!.p, lo: pm.get(d)!.lo, hi: pm.get(d)!.hi, anomaly: pm.get(d)!.anomaly } : null,
+              productionReal: mode === 'backtest' ? r?.prod ?? null : undefined,
+              productionLastYear: lyd.get(d) ?? null,
+              consumption: cm.get(d) ? { p: cm.get(d)!.p, lo: cm.get(d)!.lo, hi: cm.get(d)!.hi } : null,
+              consumptionReal: mode === 'backtest' && hasCons ? r?.cons ?? null : undefined,
+              irradianceMJ: irr.get(d) ?? null,
+            };
+          });
+        }
+        output(result, global);
+      } catch (err) {
+        if ((err as any)?.isAxiosError) fail(new Error(JSON.stringify(handleApiError(err))));
+        else fail(err);
       }
     });
 
