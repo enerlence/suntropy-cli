@@ -371,6 +371,76 @@ export function registerConnectCommands(program: Command): void {
     .requiredOption('--date <YYYY-MM-DD>', 'Día, en hora local de la planta')
     .action(toolAction('get_plant_power_curve', (plantId: string, o) => ({ plantId, date: o.date })));
 
+  // ─── análisis de Suntropy (Solar) ──────────────────────────────────────
+  connect
+    .command('analysis <plantId>')
+    .alias('analyze')
+    .summary('Análisis con predicciones de una planta: salud (TimesFM), consumo, curva del día y causa')
+    .description(
+      'El análisis que hace Suntropy en la tarjeta «Pronóstico de producción», en una sola respuesta:\n' +
+        '- `health`, `findings`, `days`, `lastYear`: salud de la producción 0-100 en los últimos 30 días (lo\n' +
+        '  real frente a lo que esperaba TimesFM 3.0 con la irradiación de cada día y el rendimiento frente a\n' +
+        '  las mismas semanas del año pasado), hallazgos (parada, caída, sin datos, degradación) y, día a día,\n' +
+        '  real / esperado / rango p10-p90;\n' +
+        '- `consumption` (sólo con contador): balance estimado frente a real (autoconsumo, excedente, red;\n' +
+        '  ±25 % = anomalía), cambio en el último año con la misma temperatura (`seasonal`) y reparto semanal;\n' +
+        '  `consumption.dailyCurve`: cambios de forma de la curva del día (carga nueva de noche o de tarde,\n' +
+        '  fondo, horas de sol; no en Huawei, Solis ni Fronius); `consumption.cause`: causa ESTIMADA guardada.\n' +
+        'Guardado una semana. --refresh lo recalcula (30-60 s, unos céntimos de BigQuery); --estimate-cause\n' +
+        'estima la causa con la curva de 5 min (Huawei: 5 llamadas de su historial; otras, 3).\n' +
+        'Ej.: suntropy connect analysis huawei:b5e3b6a9:NE=152159458',
+    )
+    .option('--refresh', 'Recalcular la salud y la curva del día en vez de lo guardado')
+    .option('--estimate-cause', 'Estimar la causa del cambio de consumo (gasta llamadas del fabricante)')
+    .option('--no-curve', 'Sin la curva del día (no pide el consumo por horas al fabricante)')
+    .action(async (plantId: string, o: { refresh?: boolean; estimateCause?: boolean; curve?: boolean }) => {
+      try {
+        const { ctx, global } = ctxOf();
+        const out = (await callTool(ctx, 'get_production_health', compact({ plantId, refresh: o.refresh ? true : undefined }))) as Record<string, any>;
+        // La curva del día y la causa, solo si la planta tiene contador (sin consumo no hay nada que mirar).
+        if (out?.consumption) {
+          const [curve, cause] = await Promise.all([
+            o.curve === false
+              ? Promise.resolve(undefined)
+              : callTool(ctx, 'get_consumption_daily_curve', compact({ plantId, refresh: o.refresh ? true : undefined })),
+            callTool(ctx, 'estimate_consumption_cause', compact({ plantId, estimate: o.estimateCause ? true : undefined })),
+          ]);
+          out.consumption = { ...out.consumption, ...(curve !== undefined ? { dailyCurve: curve } : {}), cause };
+        }
+        output(out, global);
+      } catch (err) {
+        fail(err);
+      }
+    });
+
+  const pins = connect
+    .command('pins')
+    .summary('Plantas fijadas arriba en Monitorización (`pins add|remove|set`)')
+    .description('Las plantas que el usuario ha fijado arriba en Monitorización (10 como mucho, en orden).')
+    .action(toolAction('get_pinned_plants', () => ({})));
+
+  const changePins = (change: (now: string[], ids: string[]) => string[]) => async (ids: string[]) => {
+    try {
+      const { ctx, global } = ctxOf();
+      const now = ((await callTool(ctx, 'get_pinned_plants', {})) as { plantIds?: string[] })?.plantIds ?? [];
+      output(await callTool(ctx, 'set_pinned_plants', { plantIds: change(now, ids) }), global);
+    } catch (err) {
+      fail(err);
+    }
+  };
+  pins
+    .command('add <plantIds...>')
+    .description('Fija plantas (al final; 10 como mucho)')
+    .action(changePins((now, ids) => [...now, ...ids.filter((x) => !now.includes(x))]));
+  pins
+    .command('remove <plantIds...>')
+    .description('Quita plantas de las fijadas')
+    .action(changePins((now, ids) => now.filter((x) => !ids.includes(x))));
+  pins
+    .command('set [plantIds...]')
+    .description('Sustituye la lista entera, en orden (sin ids, las quita todas)')
+    .action(changePins((_now, ids) => ids ?? []));
+
   connect
     .command('devices <plantId>')
     .description('Inversores, baterías, contadores y demás equipos de una planta')

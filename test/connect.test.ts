@@ -233,6 +233,53 @@ describe('connect: lecturas por MCP', () => {
     }
   });
 
+  it('analysis: salud y, con contador, curva del día y causa en una respuesta', async () => {
+    writeConfig(LOGGED_IN);
+    const tools = () => gw.calls.filter((c) => c.path === '/monitoring/mcp').map((c) => [c.body.params.name, c.body.params.arguments]);
+    gw.calls.length = 0;
+    let r = await cli(['connect', 'analysis', 'conContador']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(tools(), [
+      ['get_production_health', { plantId: 'conContador' }],
+      ['get_consumption_daily_curve', { plantId: 'conContador' }],
+      ['estimate_consumption_cause', { plantId: 'conContador' }],
+    ]);
+    assert.equal(r.json.health.score, 98);
+    assert.equal(r.json.consumption.dailyCurve.tool, 'get_consumption_daily_curve');
+    assert.equal(r.json.consumption.cause.tool, 'estimate_consumption_cause');
+
+    gw.calls.length = 0;
+    r = await cli(['connect', 'analyze', 'conContador', '--refresh', '--estimate-cause', '--no-curve']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(tools(), [
+      ['get_production_health', { plantId: 'conContador', refresh: true }],
+      ['estimate_consumption_cause', { plantId: 'conContador', estimate: true }],
+    ]);
+    assert.equal(r.json.consumption.dailyCurve, undefined);
+
+    // Sin contador: sólo la salud (no se gastan llamadas en curva ni causa).
+    gw.calls.length = 0;
+    r = await cli(['connect', 'analysis', 'sinContador']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(tools(), [['get_production_health', { plantId: 'sinContador' }]]);
+    assert.equal(r.json.consumption, null);
+  });
+
+  it('pins: lista, añade al final sin repetir, quita y sustituye', async () => {
+    writeConfig(LOGGED_IN);
+    const run = async (...a: string[]) => {
+      const r = await cli(['connect', 'pins', ...a]);
+      assert.equal(r.code, 0, `${a.join(' ')}: ${r.stderr}`);
+      return (r.json as { plantIds: string[] }).plantIds;
+    };
+    await run('set');
+    assert.deepEqual(await run('add', 'p1', 'p2'), ['p1', 'p2']);
+    assert.deepEqual(await run('add', 'p2', 'p3'), ['p1', 'p2', 'p3']);
+    assert.deepEqual(await run('remove', 'p1'), ['p2', 'p3']);
+    assert.deepEqual(await run(), ['p2', 'p3']);
+    assert.deepEqual(await run('set', 'p9', 'p2'), ['p9', 'p2']);
+  });
+
   it('alarms watch set con --provider de una marca', async () => {
     writeConfig(LOGGED_IN);
     const r = await cli(['connect', 'alarms', 'watch', 'set', '--enabled', 'false', '--provider', 'huawei']);

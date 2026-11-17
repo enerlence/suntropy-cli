@@ -44,6 +44,8 @@ export async function startMockGateway(): Promise<MockGateway> {
     deviceCounter: 0,
   };
   const approved = new Set<string>();
+  /** Plantas fijadas del usuario simulado (get_pinned_plants / set_pinned_plants). */
+  const pinned: string[] = [];
   const refreshes = new Map<string, number>();
   let tokenCounter = 0;
 
@@ -145,9 +147,14 @@ export async function startMockGateway(): Promise<MockGateway> {
       if (name === 'failing') {
         return send(res, 200, { jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'quota exceeded' }], isError: true } });
       }
+      if (name === 'set_pinned_plants') pinned.splice(0, pinned.length, ...args.plantIds);
       const data =
         name === 'get_connection_catalog'
           ? { providers: CATALOG.filter((c) => !args.provider || c.provider === args.provider) }
+          : name === 'get_production_health'
+          ? { plant: { id: args.plantId }, health: { score: 98 }, consumption: args.plantId === 'sinContador' ? null : { balance: {} } }
+          : name === 'get_pinned_plants' || name === 'set_pinned_plants'
+          ? { plantIds: [...pinned], max: 10, tool: name }
           : { tool: name, args };
       return send(res, 200, {
         jsonrpc: '2.0',

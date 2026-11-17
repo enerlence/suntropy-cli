@@ -530,6 +530,37 @@ Devuelve, para la ventana:
 
 Necesita las dos sesiones: `suntropy connect login` (o `SUNTROPY_CONNECT_TOKEN`) para los datos de la planta y `suntropy auth` (o `SUNTROPY_API_KEY`) para el modelo. Si el gateway no da las coordenadas, `--lat`/`--lon`.
 
+### Análisis con predicciones de una planta (`connect analysis`)
+
+El análisis que hace Suntropy en la tarjeta «Pronóstico de producción» de la ficha de planta, en una sola respuesta, calculado en Suntropy y guardado una semana. Solo hace falta `suntropy connect login`.
+
+```bash
+suntropy connect analysis <plantId>                    # salud, hallazgos, día a día y, con contador, consumo + curva del día + causa guardada
+suntropy connect analysis <plantId> --refresh          # recalcularlo (30-60 s, unos céntimos de BigQuery)
+suntropy connect analysis <plantId> --estimate-cause   # estimar la causa del cambio de consumo (Huawei: 5 llamadas de su historial)
+suntropy connect analysis <plantId> --no-curve         # sin la curva del día (no pide el consumo por horas al fabricante)
+```
+
+- **Producción:**
+  - `health` es la nota 0-100: 70 % lo real frente a lo que esperaba TimesFM con la irradiación de cada día; 30 % el rendimiento frente a las mismas semanas del año pasado. Tope 40 con una parada en curso; 80 sin datos recientes.
+  - `findings`: hallazgos de tipo `stop`, `drop`, `no_data` o `degradation`, con los kWh perdidos.
+  - `days`: real, esperado, rango p10-p90 y anomalía, cada día.
+- **Consumo** (`consumption`, `null` sin contador):
+  - `balance`: estimado frente a real; más de ±25 % es anomalía.
+  - `change`: el último año frente al anterior con la misma temperatura, incluidos los cambios `seasonal` con el frío o el calor.
+  - `weekly`: el reparto semanal.
+  - `dailyCurve`: cambios de forma de la curva del día; no disponible en Huawei, Solis ni Fronius.
+  - `cause`: la causa ESTIMADA (`ev_charging`, `electric_heating`, `air_conditioning`, `always_on_load`), con su confianza y sus pruebas.
+
+### Plantas fijadas
+
+```bash
+suntropy connect pins                      # las fijadas arriba en Monitorización (10 como mucho)
+suntropy connect pins add <plantId>...     # fijar
+suntropy connect pins remove <plantId>...  # quitar
+suntropy connect pins set <plantId>...     # sustituir la lista, en orden
+```
+
 ### Conectar cuentas de fabricantes
 
 ```bash
