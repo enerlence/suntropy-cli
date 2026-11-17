@@ -530,6 +530,38 @@ Devuelve, para la ventana:
 
 Necesita las dos sesiones: `suntropy connect login` (o `SUNTROPY_CONNECT_TOKEN`) para los datos de la planta y `suntropy auth` (o `SUNTROPY_API_KEY`) para el modelo. Si el gateway no da las coordenadas, `--lat`/`--lon`.
 
+### Análisis de Suntropy: salud, consumo, curva del día y causa estimada
+
+El mismo análisis que la tarjeta «Pronóstico de producción» de la ficha de planta, hecho en Suntropy y guardado una semana. Solo hace falta `suntropy connect login`.
+
+```bash
+suntropy connect health <plantId>               # nota de salud 0-100, hallazgos, día a día real/esperado y, con contador, el consumo
+suntropy connect health <plantId> --refresh     # recalcularlo (30-60 s, unos céntimos de BigQuery)
+suntropy connect consumption-curve <plantId>    # curva del día: carga nueva de noche/tarde (coche), fondo, horas de sol
+suntropy connect consumption-cause <plantId>    # causa estimada guardada (no gasta nada)
+suntropy connect consumption-cause <plantId> --estimate   # estimarla con la curva de 5 min (Huawei: 5 llamadas de su historial)
+```
+
+- `health`:
+  - `health` es la nota 0-100: 70 % lo real frente a lo que esperaba TimesFM con la irradiación de cada día; 30 % el rendimiento frente a las mismas semanas del año pasado. Tope 40 con una parada en curso; 80 sin datos recientes.
+  - `findings`: hallazgos de tipo `stop`, `drop`, `no_data` o `degradation`, con los kWh perdidos.
+  - `days`: real, esperado, rango p10-p90 y anomalía, cada día.
+  - `consumption`:
+    - `balance`: estimado frente a real; más de ±25 % es anomalía;
+    - `change`: el último año frente al anterior con la misma temperatura, incluidos los cambios `seasonal` con el frío o el calor;
+    - `weekly`: el reparto semanal.
+- `consumption-curve`: no disponible en Huawei ni Solis (no dan el consumo por horas), ni en Fronius (cobra por dato).
+- `consumption-cause`: cada causa (`ev_charging`, `electric_heating`, `air_conditioning`, `always_on_load`) trae su confianza y sus pruebas. Es una estimación por la forma de la curva.
+
+### Plantas fijadas
+
+```bash
+suntropy connect pins                      # las fijadas arriba en Monitorización (10 como mucho)
+suntropy connect pins add <plantId>...     # fijar
+suntropy connect pins remove <plantId>...  # quitar
+suntropy connect pins set <plantId>...     # sustituir la lista, en orden
+```
+
 ### Conectar cuentas de fabricantes
 
 ```bash

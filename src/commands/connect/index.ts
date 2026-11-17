@@ -371,6 +371,75 @@ export function registerConnectCommands(program: Command): void {
     .requiredOption('--date <YYYY-MM-DD>', 'Día, en hora local de la planta')
     .action(toolAction('get_plant_power_curve', (plantId: string, o) => ({ plantId, date: o.date })));
 
+  // ─── análisis de Suntropy (Solar) ──────────────────────────────────────
+  connect
+    .command('health <plantId>')
+    .summary('Salud de la producción (TimesFM) y análisis del consumo de una planta')
+    .description(
+      'Lo mismo que la tarjeta «Pronóstico de producción» de Suntropy: nota de salud 0-100 de los últimos\n' +
+        '30 días (lo real frente a lo que esperaba TimesFM 3.0 con la irradiación de cada día y el rendimiento\n' +
+        'frente a las mismas semanas del año pasado), hallazgos (parada, caída, sin datos, degradación) y, día a\n' +
+        'día, real / esperado / rango p10-p90. Con contador, también el consumo: balance estimado frente a real\n' +
+        '(autoconsumo, excedente, red; ±25 % = anomalía), cambio en el último año con la misma temperatura\n' +
+        '(constante, con el frío, con el calor; `seasonal`) y reparto semanal.\n' +
+        'Guardado una semana; --refresh lo recalcula (30-60 s, unos céntimos de BigQuery).\n' +
+        'Ej.: suntropy connect health huawei:b5e3b6a9:NE=152159458',
+    )
+    .option('--refresh', 'Recalcular en vez de lo guardado')
+    .action(toolAction('get_production_health', (plantId: string, o) => ({ plantId, refresh: o.refresh ? true : undefined })));
+
+  connect
+    .command('consumption-curve <plantId>')
+    .summary('Cambios en la curva del día del consumo (coche de noche, fondo, horas de sol)')
+    .description(
+      'La curva por horas de la última semana completa frente a la misma del año pasado (o la de 4 semanas\n' +
+        'antes), con los cambios de forma: carga nueva de madrugada o por la tarde (coche eléctrico), consumo\n' +
+        'de fondo y horas de sol. Pide 14 días al fabricante una vez por semana. Huawei y Solis no dan el\n' +
+        'consumo por horas y Fronius cobra por dato: `status: unavailable`.',
+    )
+    .option('--refresh', 'Recalcular la curva de esta semana')
+    .action(toolAction('get_consumption_daily_curve', (plantId: string, o) => ({ plantId, refresh: o.refresh ? true : undefined })));
+
+  connect
+    .command('consumption-cause <plantId>')
+    .summary('Causa ESTIMADA de un cambio de consumo (coche, calefacción, equipo siempre encendido)')
+    .description(
+      'Sin --estimate, sólo lo guardado (no gasta nada; `not_computed` dice cuántas llamadas costaría).\n' +
+        'Con --estimate lee la curva cada 5 min de los 2 días de más consumo de la última semana y de un día\n' +
+        'de hace 5 semanas: Huawei, contador + inversor (5 llamadas de su historial, el más limitado); las\n' +
+        'demás, la curva de planta (3). Cada causa trae su confianza y sus pruebas. Es una estimación.',
+    )
+    .option('--estimate', 'Leer las curvas del fabricante y estimar (gasta llamadas)')
+    .action(toolAction('estimate_consumption_cause', (plantId: string, o) => ({ plantId, estimate: o.estimate ? true : undefined })));
+
+  const pins = connect
+    .command('pins')
+    .summary('Plantas fijadas arriba en Monitorización (`pins add|remove|set`)')
+    .description('Las plantas que el usuario ha fijado arriba en Monitorización (10 como mucho, en orden).')
+    .action(toolAction('get_pinned_plants', () => ({})));
+
+  const changePins = (change: (now: string[], ids: string[]) => string[]) => async (ids: string[]) => {
+    try {
+      const { ctx, global } = ctxOf();
+      const now = ((await callTool(ctx, 'get_pinned_plants', {})) as { plantIds?: string[] })?.plantIds ?? [];
+      output(await callTool(ctx, 'set_pinned_plants', { plantIds: change(now, ids) }), global);
+    } catch (err) {
+      fail(err);
+    }
+  };
+  pins
+    .command('add <plantIds...>')
+    .description('Fija plantas (al final; 10 como mucho)')
+    .action(changePins((now, ids) => [...now, ...ids.filter((x) => !now.includes(x))]));
+  pins
+    .command('remove <plantIds...>')
+    .description('Quita plantas de las fijadas')
+    .action(changePins((now, ids) => now.filter((x) => !ids.includes(x))));
+  pins
+    .command('set [plantIds...]')
+    .description('Sustituye la lista entera, en orden (sin ids, las quita todas)')
+    .action(changePins((_now, ids) => ids ?? []));
+
   connect
     .command('devices <plantId>')
     .description('Inversores, baterías, contadores y demás equipos de una planta')

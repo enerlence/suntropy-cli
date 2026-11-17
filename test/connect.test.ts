@@ -233,6 +233,37 @@ describe('connect: lecturas por MCP', () => {
     }
   });
 
+  it('análisis de Suntropy: health, consumption-curve y consumption-cause', async () => {
+    writeConfig(LOGGED_IN);
+    const cases: Array<[string[], unknown]> = [
+      [['health', 'p1'], { tool: 'get_production_health', args: { plantId: 'p1' } }],
+      [['health', 'p1', '--refresh'], { tool: 'get_production_health', args: { plantId: 'p1', refresh: true } }],
+      [['consumption-curve', 'p1'], { tool: 'get_consumption_daily_curve', args: { plantId: 'p1' } }],
+      [['consumption-cause', 'p1'], { tool: 'estimate_consumption_cause', args: { plantId: 'p1' } }],
+      [['consumption-cause', 'p1', '--estimate'], { tool: 'estimate_consumption_cause', args: { plantId: 'p1', estimate: true } }],
+    ];
+    for (const [args, expected] of cases) {
+      const r = await cli(['connect', ...args]);
+      assert.equal(r.code, 0, `${args.join(' ')}: ${r.stderr}`);
+      assert.deepEqual(r.json, expected, args.join(' '));
+    }
+  });
+
+  it('pins: lista, añade al final sin repetir, quita y sustituye', async () => {
+    writeConfig(LOGGED_IN);
+    const run = async (...a: string[]) => {
+      const r = await cli(['connect', 'pins', ...a]);
+      assert.equal(r.code, 0, `${a.join(' ')}: ${r.stderr}`);
+      return (r.json as { plantIds: string[] }).plantIds;
+    };
+    await run('set');
+    assert.deepEqual(await run('add', 'p1', 'p2'), ['p1', 'p2']);
+    assert.deepEqual(await run('add', 'p2', 'p3'), ['p1', 'p2', 'p3']);
+    assert.deepEqual(await run('remove', 'p1'), ['p2', 'p3']);
+    assert.deepEqual(await run(), ['p2', 'p3']);
+    assert.deepEqual(await run('set', 'p9', 'p2'), ['p9', 'p2']);
+  });
+
   it('alarms watch set con --provider de una marca', async () => {
     writeConfig(LOGGED_IN);
     const r = await cli(['connect', 'alarms', 'watch', 'set', '--enabled', 'false', '--provider', 'huawei']);
