@@ -373,44 +373,45 @@ export function registerConnectCommands(program: Command): void {
 
   // ─── análisis de Suntropy (Solar) ──────────────────────────────────────
   connect
-    .command('health <plantId>')
-    .summary('Salud de la producción (TimesFM) y análisis del consumo de una planta')
+    .command('analysis <plantId>')
+    .alias('analyze')
+    .summary('Análisis con predicciones de una planta: salud (TimesFM), consumo, curva del día y causa')
     .description(
-      'Lo mismo que la tarjeta «Pronóstico de producción» de Suntropy: nota de salud 0-100 de los últimos\n' +
-        '30 días (lo real frente a lo que esperaba TimesFM 3.0 con la irradiación de cada día y el rendimiento\n' +
-        'frente a las mismas semanas del año pasado), hallazgos (parada, caída, sin datos, degradación) y, día a\n' +
-        'día, real / esperado / rango p10-p90. Con contador, también el consumo: balance estimado frente a real\n' +
-        '(autoconsumo, excedente, red; ±25 % = anomalía), cambio en el último año con la misma temperatura\n' +
-        '(constante, con el frío, con el calor; `seasonal`) y reparto semanal.\n' +
-        'Guardado una semana; --refresh lo recalcula (30-60 s, unos céntimos de BigQuery).\n' +
-        'Ej.: suntropy connect health huawei:b5e3b6a9:NE=152159458',
+      'El análisis que hace Suntropy en la tarjeta «Pronóstico de producción», en una sola respuesta:\n' +
+        '- `health`, `findings`, `days`, `lastYear`: salud de la producción 0-100 en los últimos 30 días (lo\n' +
+        '  real frente a lo que esperaba TimesFM 3.0 con la irradiación de cada día y el rendimiento frente a\n' +
+        '  las mismas semanas del año pasado), hallazgos (parada, caída, sin datos, degradación) y, día a día,\n' +
+        '  real / esperado / rango p10-p90;\n' +
+        '- `consumption` (sólo con contador): balance estimado frente a real (autoconsumo, excedente, red;\n' +
+        '  ±25 % = anomalía), cambio en el último año con la misma temperatura (`seasonal`) y reparto semanal;\n' +
+        '  `consumption.dailyCurve`: cambios de forma de la curva del día (carga nueva de noche o de tarde,\n' +
+        '  fondo, horas de sol; no en Huawei, Solis ni Fronius); `consumption.cause`: causa ESTIMADA guardada.\n' +
+        'Guardado una semana. --refresh lo recalcula (30-60 s, unos céntimos de BigQuery); --estimate-cause\n' +
+        'estima la causa con la curva de 5 min (Huawei: 5 llamadas de su historial; otras, 3).\n' +
+        'Ej.: suntropy connect analysis huawei:b5e3b6a9:NE=152159458',
     )
-    .option('--refresh', 'Recalcular en vez de lo guardado')
-    .action(toolAction('get_production_health', (plantId: string, o) => ({ plantId, refresh: o.refresh ? true : undefined })));
-
-  connect
-    .command('consumption-curve <plantId>')
-    .summary('Cambios en la curva del día del consumo (coche de noche, fondo, horas de sol)')
-    .description(
-      'La curva por horas de la última semana completa frente a la misma del año pasado (o la de 4 semanas\n' +
-        'antes), con los cambios de forma: carga nueva de madrugada o por la tarde (coche eléctrico), consumo\n' +
-        'de fondo y horas de sol. Pide 14 días al fabricante una vez por semana. Huawei y Solis no dan el\n' +
-        'consumo por horas y Fronius cobra por dato: `status: unavailable`.',
-    )
-    .option('--refresh', 'Recalcular la curva de esta semana')
-    .action(toolAction('get_consumption_daily_curve', (plantId: string, o) => ({ plantId, refresh: o.refresh ? true : undefined })));
-
-  connect
-    .command('consumption-cause <plantId>')
-    .summary('Causa ESTIMADA de un cambio de consumo (coche, calefacción, equipo siempre encendido)')
-    .description(
-      'Sin --estimate, sólo lo guardado (no gasta nada; `not_computed` dice cuántas llamadas costaría).\n' +
-        'Con --estimate lee la curva cada 5 min de los 2 días de más consumo de la última semana y de un día\n' +
-        'de hace 5 semanas: Huawei, contador + inversor (5 llamadas de su historial, el más limitado); las\n' +
-        'demás, la curva de planta (3). Cada causa trae su confianza y sus pruebas. Es una estimación.',
-    )
-    .option('--estimate', 'Leer las curvas del fabricante y estimar (gasta llamadas)')
-    .action(toolAction('estimate_consumption_cause', (plantId: string, o) => ({ plantId, estimate: o.estimate ? true : undefined })));
+    .option('--refresh', 'Recalcular la salud y la curva del día en vez de lo guardado')
+    .option('--estimate-cause', 'Estimar la causa del cambio de consumo (gasta llamadas del fabricante)')
+    .option('--no-curve', 'Sin la curva del día (no pide el consumo por horas al fabricante)')
+    .action(async (plantId: string, o: { refresh?: boolean; estimateCause?: boolean; curve?: boolean }) => {
+      try {
+        const { ctx, global } = ctxOf();
+        const out = (await callTool(ctx, 'get_production_health', compact({ plantId, refresh: o.refresh ? true : undefined }))) as Record<string, any>;
+        // La curva del día y la causa, solo si la planta tiene contador (sin consumo no hay nada que mirar).
+        if (out?.consumption) {
+          const [curve, cause] = await Promise.all([
+            o.curve === false
+              ? Promise.resolve(undefined)
+              : callTool(ctx, 'get_consumption_daily_curve', compact({ plantId, refresh: o.refresh ? true : undefined })),
+            callTool(ctx, 'estimate_consumption_cause', compact({ plantId, estimate: o.estimateCause ? true : undefined })),
+          ]);
+          out.consumption = { ...out.consumption, ...(curve !== undefined ? { dailyCurve: curve } : {}), cause };
+        }
+        output(out, global);
+      } catch (err) {
+        fail(err);
+      }
+    });
 
   const pins = connect
     .command('pins')

@@ -151,6 +151,8 @@ export async function startMockGateway(): Promise<MockGateway> {
       const data =
         name === 'get_connection_catalog'
           ? { providers: CATALOG.filter((c) => !args.provider || c.provider === args.provider) }
+          : name === 'get_production_health'
+          ? { plant: { id: args.plantId }, health: { score: 98 }, consumption: args.plantId === 'sinContador' ? null : { balance: {} } }
           : name === 'get_pinned_plants' || name === 'set_pinned_plants'
           ? { plantIds: [...pinned], max: 10, tool: name }
           : { tool: name, args };

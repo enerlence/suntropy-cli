@@ -233,20 +233,36 @@ describe('connect: lecturas por MCP', () => {
     }
   });
 
-  it('análisis de Suntropy: health, consumption-curve y consumption-cause', async () => {
+  it('analysis: salud y, con contador, curva del día y causa en una respuesta', async () => {
     writeConfig(LOGGED_IN);
-    const cases: Array<[string[], unknown]> = [
-      [['health', 'p1'], { tool: 'get_production_health', args: { plantId: 'p1' } }],
-      [['health', 'p1', '--refresh'], { tool: 'get_production_health', args: { plantId: 'p1', refresh: true } }],
-      [['consumption-curve', 'p1'], { tool: 'get_consumption_daily_curve', args: { plantId: 'p1' } }],
-      [['consumption-cause', 'p1'], { tool: 'estimate_consumption_cause', args: { plantId: 'p1' } }],
-      [['consumption-cause', 'p1', '--estimate'], { tool: 'estimate_consumption_cause', args: { plantId: 'p1', estimate: true } }],
-    ];
-    for (const [args, expected] of cases) {
-      const r = await cli(['connect', ...args]);
-      assert.equal(r.code, 0, `${args.join(' ')}: ${r.stderr}`);
-      assert.deepEqual(r.json, expected, args.join(' '));
-    }
+    const tools = () => gw.calls.filter((c) => c.path === '/monitoring/mcp').map((c) => [c.body.params.name, c.body.params.arguments]);
+    gw.calls.length = 0;
+    let r = await cli(['connect', 'analysis', 'conContador']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(tools(), [
+      ['get_production_health', { plantId: 'conContador' }],
+      ['get_consumption_daily_curve', { plantId: 'conContador' }],
+      ['estimate_consumption_cause', { plantId: 'conContador' }],
+    ]);
+    assert.equal(r.json.health.score, 98);
+    assert.equal(r.json.consumption.dailyCurve.tool, 'get_consumption_daily_curve');
+    assert.equal(r.json.consumption.cause.tool, 'estimate_consumption_cause');
+
+    gw.calls.length = 0;
+    r = await cli(['connect', 'analyze', 'conContador', '--refresh', '--estimate-cause', '--no-curve']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(tools(), [
+      ['get_production_health', { plantId: 'conContador', refresh: true }],
+      ['estimate_consumption_cause', { plantId: 'conContador', estimate: true }],
+    ]);
+    assert.equal(r.json.consumption.dailyCurve, undefined);
+
+    // Sin contador: sólo la salud (no se gastan llamadas en curva ni causa).
+    gw.calls.length = 0;
+    r = await cli(['connect', 'analysis', 'sinContador']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(tools(), [['get_production_health', { plantId: 'sinContador' }]]);
+    assert.equal(r.json.consumption, null);
   });
 
   it('pins: lista, añade al final sin repetir, quita y sustituye', async () => {
