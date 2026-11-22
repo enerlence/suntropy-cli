@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { output, outputError, type OutputOptions } from '../../output.js';
+import { createServiceClient, handleApiError, type ClientOptions } from '../../client.js';
+import { buildForecastBody, OUTPUTS, pickOutput } from './forecast.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
   let root = cmd;
@@ -219,6 +221,57 @@ export function registerCurvesCommands(program: Command): void {
         output(serie, getGlobalOpts(curves));
       } catch (err) {
         outputError(err);
+      }
+    });
+
+  // --- forecast ---
+  curves
+    .command('forecast')
+    .description(
+      'Forecast any PowerCurve (production, consumption…) with TimesFM 3.0 (Suntropy API).\n' +
+      'The input can also be a [period, value] series, e.g. the output of `suntropy connect energy` (daily or hourly).\n' +
+      'forecast: predicts the next days/hours after the end of the curve, with a p10-p90 band.\n' +
+      'backtest: hides the last points, predicts them and compares (MAE, WAPE, band coverage, possible anomalies).\n' +
+      'For production curves pass --lat/--lon: the solar irradiance (Open-Meteo, real + 16-day forecast) is used as covariate.\n' +
+      'Results are kept 7 days (use --refresh to recalculate).\n\n' +
+      'Examples:\n' +
+      '  suntropy curves forecast --input production.json --lat 36.72 --lon -4.42 --horizon 7\n' +
+      '  suntropy curves forecast --input production.json --granularity hour --horizon 48 --lat 36.72 --lon -4.42 --output median > next48h.json\n' +
+      '  suntropy curves forecast --input consumption.json --granularity hour --mode backtest --horizon 72 --output metrics\n' +
+      '  suntropy studies curves <studyId> consumption | suntropy curves forecast --horizon 14\n' +
+      '  suntropy connect energy <plantId> --metric pv_yield --granularity day --from 2025-11-01 --to 2026-11-12 \\\n' +
+      '    | suntropy curves forecast --mode backtest --horizon 10 --lat 36.66 --lon -4.50 --output points'
+    )
+    .option('--input <file>', 'Input PowerCurve file (or - for stdin)')
+    .option('--mode <mode>', 'forecast | backtest (default forecast)')
+    .option('--granularity <g>', 'day | hour (default day)')
+    .option('--horizon <n>', 'Points to predict: days 1-120 (default 7), hours 1-720 (default 48); 16 days at most with irradiance in forecast mode')
+    .option('--lat <latitude>', 'Plant latitude (uses the irradiance covariate)')
+    .option('--lon <longitude>', 'Plant longitude (uses the irradiance covariate)')
+    .option('--covariate <c>', 'irradiance | none (default: irradiance with --lat/--lon, none otherwise)')
+    .option('--confidence <level>', 'Band width, 0.5-0.98 (default 0.8 = p10-p90)')
+    .option('--refresh', 'Recalculate instead of using the stored result')
+    .option('--output <what>', `What to print: ${OUTPUTS.join(' | ')} (median/lower/upper are PowerCurves, hourly only)`, 'full')
+    .action(async (opts) => {
+      try {
+        const data = await readCurveInput(opts.input);
+        const body = buildForecastBody(data, opts);
+        const global = getGlobalOpts(curves);
+        const client = createServiceClient('solar', global as ClientOptions);
+        const res = await client.post('/api/forecast/power-curve', body, { timeout: 180000 });
+        const envelope = res.data as { code?: number; data?: any; error?: { code?: string; message?: string } };
+        if (envelope?.error || (envelope?.code && envelope.code >= 400)) {
+          outputError({
+            error: true,
+            status: envelope.code,
+            message: envelope.error?.message || envelope.error?.code || 'Forecast error',
+            details: envelope.error,
+          });
+          return;
+        }
+        output(pickOutput(envelope.data, opts.output), global);
+      } catch (err) {
+        outputError((err as any)?.isAxiosError ? handleApiError(err) : err);
       }
     });
 

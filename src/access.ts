@@ -105,6 +105,9 @@ const WRITE_VERBS = new Set([
  */
 const PATH_OVERRIDES: Record<string, CommandTier> = {
   'studies calculate production': 'write',
+  // Llamada genérica a cualquier herramienta del MCP de Connect (incluidas las
+  // que escriben, como set_alarm_watch): no puede quedar en el nivel de lectura.
+  'connect call': 'write',
 };
 
 export function classifyPath(segs: string[]): CommandTier {
@@ -131,6 +134,8 @@ const EXEMPT_CONFIG_LEAVES = new Set(['set', 'get', 'list', 'create-profile', 'u
 export function isExemptPath(segs: string[]): boolean {
   if (segs[0] === 'auth') return true;
   if (segs[0] === 'command-profile') return true;
+  // La sesión de Suntropy Connect es autenticación, como `auth`.
+  if (segs[0] === 'connect' && segs.length === 2 && ['login', 'logout', 'status'].includes(segs[1])) return true;
   if (segs[0] === 'config' && segs.length === 2 && EXEMPT_CONFIG_LEAVES.has(segs[1])) return true;
   return false;
 }
