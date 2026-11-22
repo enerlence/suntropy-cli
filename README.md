@@ -274,6 +274,44 @@ suntropy curves subtract --a prod.json --b cons.json \
   | suntropy curves filter-positive --input - --save excesses.json
 ```
 
+#### `suntropy curves forecast` - Forecast any curve (TimesFM 3.0)
+
+Predicts the next days or hours of any PowerCurve (production, consumption…), or of a
+`[period, value]` series such as the output of `suntropy connect energy`, with
+a p10-p90 band, or backtests its last points against the real values. Runs on the
+Suntropy API (`POST /solar/api/forecast/power-curve`, also `POST /api/v2/forecasts/power-curve`).
+It is a read command: nothing is stored on the account, and results are kept 7 days
+(`--refresh` recalculates).
+
+```bash
+# Production: next 7 days, with the solar irradiance at the plant (Open-Meteo) as covariate
+suntropy curves forecast --input production.json --lat 36.72 --lon -4.42 --horizon 7
+
+# Hourly, and only the median as a PowerCurve to keep piping
+suntropy curves forecast --input production.json --granularity hour --horizon 48 \
+  --lat 36.72 --lon -4.42 --output median | suntropy curves total
+
+# A Suntropy Connect plant, straight from its daily energy (no hourly data from the manufacturer)
+suntropy connect energy <plantId> --metric pv_yield --granularity day --from 2025-11-01 --to 2026-11-12 \
+  | suntropy curves forecast --mode backtest --horizon 10 --lat 36.66 --lon -4.50 --output metrics
+
+# Consumption (no covariate): backtest the last 72 hours and print the error
+suntropy curves forecast --input consumption.json --granularity hour --mode backtest --horizon 72 --output metrics
+```
+
+| Option | Values |
+|---|---|
+| `--mode` | `forecast` (default) · `backtest` |
+| `--granularity` | `day` (default, daily totals) · `hour` |
+| `--horizon` | days 1-120 (default 7) · hours 1-720 (default 48) · 16 days at most with irradiance in forecast mode |
+| `--lat` / `--lon` | turn on the irradiance covariate (production curves) |
+| `--covariate` | `irradiance` · `none` |
+| `--confidence` | band width, 0.5-0.98 (default 0.8 = p10-p90) |
+| `--output` | `full` (default) · `points` · `metrics` (backtest) · `median` / `lower` / `upper` (PowerCurves, hourly only) |
+
+In backtest, a point is a *possible anomaly* when the real value is below the band,
+below half the forecast, and at least 10 % of the curve's usual high (p95) was expected.
+
 ### `suntropy consumption` - Consumption Curves
 
 Generate consumption curves from patterns, profiles, or files.
@@ -430,6 +468,11 @@ suntropy satvolt campaigns create --name "Cobo Calleja" --circle 40.2597,-3.7545
 suntropy satvolt campaigns create --name "Test" --polygon @area.geojson --steps @steps.json
 suntropy satvolt campaigns create --name "Sonda" --template "Industria" --circle 37.35,-6.27 --radius 5000 --max-leads 50
 suntropy satvolt campaigns create --name "Copia" --from-campaign 62 --bounds 40.45,-3.70,40.44,-3.68
+# Cadastral parcel campaigns: one lead per parcel (pools, built vs declared area, plots)
+suntropy satvolt campaigns estimate --circle 40.515,-3.893 --radius 800 \
+  --parcel-classes urban --parcel-uses residential --parcel-min-area 300 --format human   # 20-50 s
+suntropy satvolt campaigns create --name "Piscinas" --circle 40.515,-3.893 --radius 800 \
+  --parcels @parcels.json --max-leads 200 --steps @geo-pools.json
 suntropy satvolt campaigns start <id>
 suntropy satvolt campaigns logs <id> --follow --format human
 suntropy satvolt campaigns funnel <id>
@@ -451,6 +494,7 @@ suntropy satvolt templates delete "Industria" --yes
 suntropy satvolt config get <id> --save pipeline.json
 suntropy satvolt config update <id> --data @pipeline.json      # full replace
 suntropy satvolt config patch <id> --data @patch.json          # merge by step uid
+suntropy satvolt config patch <id> --parcel-min-area 500         # parcel filters, only while queued
 suntropy satvolt steps list <id>
 suntropy satvolt steps add <id> --action QUALIFY --config '{"qualificationDefinition":"..."}'
 suntropy satvolt steps set <id> <uid> --config '{"enableWebSearch":true}'
@@ -487,15 +531,20 @@ credits arrived. Only an admin of the account can buy. With a JWT, `balance`
 goes to Satvolt (`<server>/satvolt/api/v1/credits`) and `packs`/`checkout` to
 payments (`<server>/payments/payments/satvolt/credit-packs…`).
 
-JSON arguments (`--steps`, `--config`, `--data`, `--columns`, `--polygon`) accept
+Parcel campaigns (`--lead-source cadastral_parcels`, implied by `--parcels` or any
+`--parcel-*` flag) work in `campaigns create|estimate`, `config patch` and
+`templates create|patch`; see `suntropy satvolt campaigns create --help`.
+
+JSON arguments (`--steps`, `--config`, `--data`, `--columns`, `--polygon`, `--parcels`) accept
 inline JSON, `@file.json` or `-` for stdin. Errors keep the API `code` and
 validation `details` (step index, uid and field). `reset` and `delete` are in the
 `delete` permission tier; `start`, `resume`, `run`, `run-step`, `extend`, `patch`
 and `duplicate` are `write`. Skills: [`satvolt-cli`](skills/satvolt-cli.md)
 (command reference), [`satvolt-api`](skills/satvolt-api.md) (HTTP API) and the
 workflows [`satvolt-campaign`](skills/satvolt-campaign.md),
-[`satvolt-probe-to-full-campaign`](skills/satvolt-probe-to-full-campaign.md) and
-[`satvolt-lead-troubleshooting`](skills/satvolt-lead-troubleshooting.md).
+[`satvolt-probe-to-full-campaign`](skills/satvolt-probe-to-full-campaign.md),
+[`satvolt-named-leads`](skills/satvolt-named-leads.md) (1-10 specific companies, step
+by step) and [`satvolt-lead-troubleshooting`](skills/satvolt-lead-troubleshooting.md).
 
 ### `suntropy config` - Configuration
 
@@ -505,6 +554,119 @@ suntropy config get server
 suntropy config list
 suntropy config create-profile staging
 suntropy config use staging
+```
+
+## Suntropy Connect (monitorización de inversores)
+
+`suntropy connect` habla con el gateway de Suntropy Connect
+(`https://connect-gateway.suntropy.ai`), no con la API de Suntropy: su sesión es
+independiente de `suntropy auth` y se guarda en `profiles.<perfil>.connect` de
+`~/.suntropy/config.json` (con permisos 0600). Respeta el `--profile` global.
+
+### Login o alta sin contraseña
+
+```bash
+# Por correo (recomendado para agentes): si el correo no tiene cuenta, se crea
+suntropy connect login --email ana@instaladora.es --utm-campaign alarmas-growatt
+suntropy connect login --code 482913          # el código de 6 dígitos que le ha llegado
+
+# Por enlace: el usuario aprueba en app.suntropy.ai con su sesión
+suntropy connect login                         # devuelve verificationUriComplete y userCode
+suntropy connect login --continue              # espera la aprobación y guarda la sesión
+
+suntropy connect status                        # sin mostrar tokens
+suntropy connect logout
+```
+
+Sin terminal (un agente) los comandos no se quedan esperando: devuelven el siguiente paso en
+`next`. Con terminal, `login` espera la aprobación o pide el código. Si la cuenta no tiene
+licencia de Connect, `--code` responde `licence_inactive` con el enlace para empezar la
+prueba de 7 días en el navegador; después, `--continue`. El token se renueva solo (refresh
+rotatorio). `SUNTROPY_CONNECT_TOKEN` sustituye a la sesión guardada.
+
+### Lecturas (MCP de monitorización)
+
+```bash
+suntropy connect summary                       # empieza aquí
+suntropy connect connections
+suntropy connect plants --query "Pérez"
+suntropy connect plant-status <plantId> <plantId>
+suntropy connect energy <plantId> --metric pv_yield --granularity day --from 2026-11-01
+suntropy connect power-curve <plantId> --date 2026-11-09
+suntropy connect devices <plantId>
+suntropy connect device-realtime <deviceId>
+suntropy connect device-history <deviceId> --from 2026-11-09T00:00:00+01:00 --to 2026-11-10T00:00:00+01:00
+suntropy connect alarms --min-severity major --unread-only
+suntropy connect alarms watch get
+suntropy connect alarms watch set --enabled true --provider all
+suntropy connect tools                         # todas las herramientas
+suntropy connect call <herramienta> --args '{"…":"…"}'
+```
+
+### Pronóstico de una planta (TimesFM 3.0)
+
+```bash
+suntropy connect forecast <plantId>                         # backtest: últimos 30 días predichos sin verlos frente a lo real
+suntropy connect forecast <plantId> --mode forecast         # próximos 7 días (hasta 16)
+suntropy connect forecast <plantId> --mode forecast --horizon 14 --days   # con el detalle día a día
+```
+
+Devuelve, para la ventana:
+- `production`: lo esperado por TimesFM con la irradiación de cada día (Open-Meteo), lo real y los días anómalos (backtest), y `lastYear`: irradiación × kWh/MJ de las mismas fechas del año pasado (±10 días), una referencia sin modelo.
+- `consumption` (solo con contador): consumo esperado (TimesFM, dos años de consumo diario), la media del mismo periodo del año pasado o del mes anterior, y `balance`: autoconsumo estimado = `overlapFactor` × min(producción, consumo) cada día, con el factor del periodo de referencia; excedente = producción − autoconsumo; comprado a red = consumo − autoconsumo. En backtest, frente al real.
+
+Necesita las dos sesiones: `suntropy connect login` (o `SUNTROPY_CONNECT_TOKEN`) para los datos de la planta y `suntropy auth` (o `SUNTROPY_API_KEY`) para el modelo. Si el gateway no da las coordenadas, `--lat`/`--lon`.
+
+### Análisis con predicciones de una planta (`connect analysis`)
+
+El análisis que hace Suntropy en la tarjeta «Pronóstico de producción» de la ficha de planta, en una sola respuesta, calculado en Suntropy y guardado una semana. Solo hace falta `suntropy connect login`.
+
+```bash
+suntropy connect analysis <plantId>                    # salud, hallazgos, día a día y, con contador, consumo + curva del día + causa guardada
+suntropy connect analysis <plantId> --refresh          # recalcularlo (30-60 s, unos céntimos de BigQuery)
+suntropy connect analysis <plantId> --estimate-cause   # estimar la causa del cambio de consumo (Huawei: 5 llamadas de su historial)
+suntropy connect analysis <plantId> --no-curve         # sin la curva del día (no pide el consumo por horas al fabricante)
+```
+
+- **Producción:**
+  - `health` es la nota 0-100: 70 % lo real frente a lo que esperaba TimesFM con la irradiación de cada día; 30 % el rendimiento frente a las mismas semanas del año pasado. Tope 40 con una parada en curso; 80 sin datos recientes.
+  - `findings`: hallazgos de tipo `stop`, `drop`, `no_data` o `degradation`, con los kWh perdidos.
+  - `days`: real, esperado, rango p10-p90 y anomalía, cada día.
+- **Consumo** (`consumption`, `null` sin contador):
+  - `balance`: estimado frente a real; más de ±25 % es anomalía.
+  - `change`: el último año frente al anterior con la misma temperatura, incluidos los cambios `seasonal` con el frío o el calor.
+  - `weekly`: el reparto semanal.
+  - `dailyCurve`: cambios de forma de la curva del día; no disponible en Huawei, Solis ni Fronius.
+  - `cause`: la causa ESTIMADA (`ev_charging`, `electric_heating`, `air_conditioning`, `always_on_load`), con su confianza y sus pruebas.
+
+### Plantas fijadas
+
+```bash
+suntropy connect pins                      # las fijadas arriba en Monitorización (10 como mucho)
+suntropy connect pins add <plantId>...     # fijar
+suntropy connect pins remove <plantId>...  # quitar
+suntropy connect pins set <plantId>...     # sustituir la lista, en orden
+```
+
+### Conectar cuentas de fabricantes
+
+```bash
+suntropy connect add huawei --label "Cliente Pérez"      # enlace: el agente no ve las credenciales
+suntropy connect link-status <id> --wait
+suntropy connect catalog huawei                          # campos de la marca, sin valores
+suntropy connect add huawei --field host=eu5.fusionsolar.huawei.com --field username=api --field password
+# (directa: los secretos sin valor se piden ocultos, o una línea por secreto en stdin)
+```
+
+### MCP en clientes de IA
+
+```bash
+suntropy mcp add --client claude-code     # ejecuta `claude mcp add --transport http …`
+suntropy mcp add --client codex           # `codex mcp add … --url …` y luego `codex mcp login`
+suntropy mcp add --client cursor          # escribe ~/.cursor/mcp.json
+suntropy mcp add --client claude-ai       # enlace de alta del conector y pasos
+suntropy mcp add --client chatgpt         # pasos (modo desarrollador)
+# --print para no tocar nada; --brand huawei para el MCP de una sola marca
 ```
 
 ## Configuration
@@ -544,4 +706,6 @@ Available skills:
 - **satvolt-api** - Satvolt public HTTP API (`/satvolt/api/v1`)
 - **satvolt-campaign** - Create, configure, follow and export Satvolt campaigns
 - **satvolt-probe-to-full-campaign** - Probe campaign from a template, validate, fix and extend to the whole area
+- **satvolt-named-leads** - Analyse 1-10 specific companies given by name (e.g. an inbound lead), running the steps one by one
 - **satvolt-lead-troubleshooting** - Diagnose failing steps and re-run them on leads
+- **connect-monitoring** - `suntropy connect`: login sin contraseña, plantas, alarmas y alta de cuentas de fabricantes

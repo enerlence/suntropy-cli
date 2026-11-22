@@ -8,8 +8,54 @@ import {
   satvoltClient,
   satvoltError,
 } from './api.js';
+import { collect } from './campaigns.js';
+import { leadsFromOpts } from './lead-inputs.js';
 
 const LEAD_LIST_FIELDS = 'idLead,commercialName,state,stateError,lastAction,address,phone,url';
+
+const WAIT_POLL_MS = 5000;
+const WAIT_DEFAULT_TIMEOUT_S = 900;
+const RUNNING_STEP_STATUSES = new Set(['processing', 'pending', 'waiting']);
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Waits until the run queued at `since` finishes on the lead, and returns that
+ * step's status together with the fullData keys it wrote. Asynchronous steps
+ * (agents) finish when their webhook arrives, minutes later.
+ */
+async function waitForStep(
+  client: ReturnType<typeof satvoltClient>,
+  campaignId: number,
+  leadId: number,
+  stepUid: string,
+  since: number,
+  timeoutS: number,
+): Promise<{ step: any; fullData: Record<string, unknown> }> {
+  const deadline = Date.now() + timeoutS * 1000;
+  for (;;) {
+    const lead = await call(client, 'get', `/campaigns/${campaignId}/leads/${leadId}`);
+    const step = (lead.steps ?? []).find((s: any) => s.uid === stepUid);
+    // Tolerance for clock skew between this machine and the backend.
+    const finishedAt = step?.completedAt ? Date.parse(step.completedAt) : NaN;
+    if (step && !RUNNING_STEP_STATUSES.has(step.status) && finishedAt >= since - 60_000) {
+      const keys: string[] = step.keys ?? [];
+      const withData = keys.length
+        ? await call(client, 'get', `/campaigns/${campaignId}/leads/${leadId}`, {
+            params: { fullData: keys.join(',') },
+          })
+        : null;
+      return { step, fullData: withData?.fullData ?? {} };
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `Step ${stepUid} is still running on lead ${leadId} after ${timeoutS}s. ` +
+          `Check later with: suntropy satvolt leads get ${campaignId} ${leadId}`,
+      );
+    }
+    await sleep(WAIT_POLL_MS);
+  }
+}
 
 export function registerSatvoltLeadCommands(satvolt: Command): void {
   const leads = satvolt
@@ -141,21 +187,36 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
         '                unqualified lead keeps its state (except when re-running QUALIFY)\n' +
         '  --continue    continue the pipeline from that step (later steps run again)\n' +
         '  --force       skip the check that the lead completed the step dependencies\n' +
+        '  --wait        wait for the step to finish and print its status and the data it\n' +
+        '                wrote (agents take minutes; --timeout, 900 s by default)\n' +
         'Examples:\n' +
         '  suntropy satvolt leads run-step 62 2034 ESTIMATE_CONSUMPTION\n' +
-        '  suntropy satvolt leads run-step 62 2081 f8771dae3f963702 --continue',
+        '  suntropy satvolt leads run-step 62 2081 f8771dae3f963702 --continue\n' +
+        '  suntropy satvolt leads run-step 88 7901 GEOCODE_ADDRESS --wait',
     )
     .option('--continue', 'Continue the pipeline after the step')
     .option('--force', 'Run even if the lead has not completed the step dependencies')
+    .option('--wait', 'Wait for the step to finish and print its result')
+    .option('--timeout <seconds>', 'With --wait: give up after this long', String(WAIT_DEFAULT_TIMEOUT_S))
     .action(async (campaignId, leadId, step, opts) => {
       const global = getGlobalOpts(leads);
       try {
+        const client = satvoltClient(global);
+        const cId = parseId(campaignId, 'campaignId');
+        const lId = parseId(leadId, 'leadId');
+        const since = Date.now();
         const data = await call(
-          satvoltClient(global),
+          client,
           'post',
-          `/campaigns/${parseId(campaignId, 'campaignId')}/leads/${parseId(leadId, 'leadId')}/steps/${encodeURIComponent(step)}/run`,
+          `/campaigns/${cId}/leads/${lId}/steps/${encodeURIComponent(step)}/run`,
           { data: { mode: opts.continue ? 'continue' : 'only', force: opts.force === true } },
         );
+        if (opts.wait && !opts.continue) {
+          const timeout = parseId(opts.timeout, '--timeout');
+          const result = await waitForStep(client, cId, lId, data.stepUid, since, timeout);
+          output({ run: data, step: result.step, fullData: result.fullData }, global);
+          return;
+        }
         output(data, global);
       } catch (err) {
         const mapped = satvoltError(err);
@@ -164,6 +225,36 @@ export function registerSatvoltLeadCommands(satvolt: Command): void {
             `${mapped.message} Raise it with: suntropy satvolt campaigns credit-limit ${campaignId} <credits>.`;
         }
         outputError(mapped);
+      }
+    });
+
+  leads
+    .command('add <campaignId>')
+    .summary('Add 1-25 specific companies to an existing campaign (e.g. an inbound lead).')
+    .description(
+      'Add companies given by name to a campaign that already exists, for instance an\n' +
+        'inbound lead into the client\'s "Inbound" campaign. Nothing runs: run the steps\n' +
+        'on the new leads with `leads run-step ... --wait` (GEOCODE_ADDRESS first when a\n' +
+        'lead has no coordinates). A lead without coordinates needs the campaign to have\n' +
+        'GEOCODE_ADDRESS in its pipeline (400 GEOCODE_STEP_REQUIRED otherwise).\n' +
+        'Examples:\n' +
+        '  suntropy satvolt leads add 88 --company "Talleres Pérez SL | Polígono La Isla, Dos Hermanas"\n' +
+        '  suntropy satvolt leads add 88 --leads \'[{"name":"ACME","coordinates":"37.41,-6.03","email":"x@acme.es"}]\'',
+    )
+    .option('--company <name|address>', 'Company "Name | address" (repeatable)', collect)
+    .option('--leads <json>', 'Leads as JSON array, @file or -')
+    .action(async (campaignId, opts) => {
+      const global = getGlobalOpts(leads);
+      try {
+        const data = await call(
+          satvoltClient(global),
+          'post',
+          `/campaigns/${parseId(campaignId, 'campaignId')}/leads`,
+          { data: { leads: leadsFromOpts(opts) } },
+        );
+        output(data, global);
+      } catch (err) {
+        outputError(satvoltError(err));
       }
     });
 

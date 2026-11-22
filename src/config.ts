@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -26,6 +26,40 @@ export interface SuntropyProfile {
    * (`suntropy config set gatewayUrl http://localhost:8087`).
    */
   gatewayUrl?: string;
+  /** Sesión de Suntropy Connect (gateway OAuth, independiente del JWT de la API). */
+  connect?: ConnectCredentials;
+}
+
+/**
+ * Credenciales de Suntropy Connect guardadas por `suntropy connect login`.
+ * Son tokens del gateway (`pvo_…` + refresh rotatorio), no el JWT de la API de
+ * Suntropy: por eso van aparte de `token`.
+ */
+export interface ConnectCredentials {
+  gateway: string;
+  clientId: string;
+  accessToken?: string;
+  refreshToken?: string;
+  /** ISO. Cuándo caduca el access token. */
+  expiresAt?: string;
+  scope?: string;
+  email?: string;
+  obtainedAt?: string;
+  /** Login a medias: el device_code espera aprobación o el código del correo. */
+  pending?: ConnectPendingLogin;
+}
+
+export interface ConnectPendingLogin {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  /** ISO. Caducidad del device_code (30 min). */
+  expiresAt: string;
+  interval: number;
+  email?: string;
+  /** ISO. Caducidad del código enviado por correo (15 min). */
+  emailCodeExpiresAt?: string;
 }
 
 export interface SuntropyConfig {
@@ -69,7 +103,13 @@ export function loadConfig(): SuntropyConfig {
 
 export function saveConfig(config: SuntropyConfig): void {
   ensureConfigDir();
-  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  // Guarda tokens: sólo legible por el usuario.
+  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+  try {
+    chmodSync(CONFIG_FILE, 0o600);
+  } catch {
+    // En sistemas sin permisos POSIX no pasa nada.
+  }
 }
 
 export function getActiveProfile(config: SuntropyConfig, profileOverride?: string): SuntropyProfile {
