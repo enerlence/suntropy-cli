@@ -4,6 +4,7 @@
  */
 import type { Operation } from '../core.js';
 import { CUSTOM_FIELDS, inventoryOps, KITS, KIT_BATTERIES, KIT_INVERTERS, KIT_PANELS, MANUFACTURERS } from './inventory.js';
+import { FORECASTS } from './forecasts.js';
 import { NOTIFICATIONS, REFERENCE } from './reference.js';
 import { ADVANCED, GEOCODE, PROJECTS, SHAREABLES, SOLARFORM, SOLARFORM_CONFIG, TEMPLATES, THEME } from './settings.js';
 import { PPA, STUDIES } from './studies.js';
@@ -11,7 +12,7 @@ import { KITS_RESOURCE, RESOURCES } from '../../commands/inventory/resources.js'
 
 export function allOperations(): Operation[] {
   const groups: Record<string, Operation>[] = [
-    STUDIES, PPA, REFERENCE, NOTIFICATIONS, THEME, SOLARFORM_CONFIG, ADVANCED, SOLARFORM, PROJECTS, SHAREABLES, TEMPLATES, GEOCODE,
+    STUDIES, PPA, REFERENCE, NOTIFICATIONS, THEME, SOLARFORM_CONFIG, ADVANCED, SOLARFORM, PROJECTS, SHAREABLES, TEMPLATES, GEOCODE, FORECASTS,
     MANUFACTURERS, CUSTOM_FIELDS, KITS, KIT_PANELS, KIT_INVERTERS, KIT_BATTERIES,
   ];
   for (const cfg of [...RESOURCES, KITS_RESOURCE]) {

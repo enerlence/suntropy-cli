@@ -86,6 +86,8 @@ export interface RequestSpec<I> {
   query?: Val<I, Record<string, unknown> | undefined>;
   body?: (input: I, ctx: Ctx) => unknown;
   headers?: Val<I, Record<string, string> | undefined>;
+  /** Request timeout in ms, for the slow routes (default: the client's 30 s). */
+  timeout?: number;
 }
 
 /** Sends one request and returns the response body. Drops `undefined` query values. */
@@ -93,12 +95,19 @@ export async function send(
   ctx: Ctx,
   method: Method,
   path: string,
-  spec: { query?: Record<string, unknown>; body?: unknown; headers?: Record<string, string> } = {},
+  spec: { query?: Record<string, unknown>; body?: unknown; headers?: Record<string, string>; timeout?: number } = {},
 ): Promise<any> {
   const params = spec.query
     ? Object.fromEntries(Object.entries(spec.query).filter(([, v]) => v !== undefined))
     : undefined;
-  const res = await ctx.http.request({ method, url: path, params, data: spec.body, headers: spec.headers });
+  const res = await ctx.http.request({
+    method,
+    url: path,
+    params,
+    data: spec.body,
+    headers: spec.headers,
+    ...(spec.timeout ? { timeout: spec.timeout } : {}),
+  });
   return res.data;
 }
 
@@ -117,6 +126,7 @@ export function v1<I = any, O = any>(
         query: value(spec.query, input, ctx),
         body: value(spec.body, input, ctx),
         headers: value(spec.headers, input, ctx),
+        timeout: spec.timeout,
       });
       return spec.out ? spec.out(data, input, ctx) : data;
     },
@@ -146,6 +156,7 @@ export function v2<I = any, O = any>(
         query: value(spec.query, input, ctx),
         body: value(spec.body, input, ctx),
         headers: value(spec.headers, input, ctx),
+        timeout: spec.timeout,
       });
       const envelope: V2Envelope = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : { data: raw };
       return spec.out ? spec.out(envelope.data, input, ctx, envelope) : envelope.data;

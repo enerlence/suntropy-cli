@@ -23,7 +23,9 @@ import {
   verifyEmailCode,
 } from '../../connect/login.js';
 import { ask, isInteractive, sleep } from '../../connect/prompt.js';
-import { createServiceClient, handleApiError, type ClientOptions } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke, type GlobalOptions } from '../../api/core.js';
+import { FORECASTS } from '../../api/ops/forecasts.js';
 import {
   addDays,
   consumptionBalance,
@@ -685,16 +687,13 @@ export function registerConnectCommands(program: Command): void {
         }));
 
         // El modelo, en la API de Suntropy.
-        const solar = createServiceClient('solar', global as ClientOptions);
         const model = async (series: Array<[string, number]>, covariate: boolean) => {
           const body: Record<string, unknown> = { series, mode, granularity: 'day', horizon };
           if (covariate) Object.assign(body, { latitude: lat, longitude: lon, covariate: 'irradiance' });
           else body.covariate = 'none';
           if (o.refresh) body.refresh = true;
-          const res = await solar.post('/api/forecast/power-curve', body, { timeout: 180000 });
-          const env = res.data as any;
-          if (env?.error || (env?.code && env.code >= 400)) throw new Error(env?.error?.message || env?.error?.code || 'Forecast error');
-          return ((env?.data ?? env)?.forecast || []) as ModelPoint[];
+          const forecast = await invoke(FORECASTS.powerCurve, global as GlobalOptions, body);
+          return (forecast?.forecast || []) as ModelPoint[];
         };
         const pairs = (m: Map<string, number | null>) =>
           rows.filter((r) => m.get(r.d) !== null && m.get(r.d) !== undefined).map((r) => [r.d, m.get(r.d) as number] as [string, number]);

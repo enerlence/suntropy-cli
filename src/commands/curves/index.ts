@@ -1,7 +1,9 @@
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { output, outputError, type OutputOptions } from '../../output.js';
-import { createServiceClient, handleApiError, type ClientOptions } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke, type GlobalOptions } from '../../api/core.js';
+import { FORECASTS } from '../../api/ops/forecasts.js';
 import { buildForecastBody, OUTPUTS, pickOutput } from './forecast.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
@@ -257,21 +259,10 @@ export function registerCurvesCommands(program: Command): void {
         const data = await readCurveInput(opts.input);
         const body = buildForecastBody(data, opts);
         const global = getGlobalOpts(curves);
-        const client = createServiceClient('solar', global as ClientOptions);
-        const res = await client.post('/api/forecast/power-curve', body, { timeout: 180000 });
-        const envelope = res.data as { code?: number; data?: any; error?: { code?: string; message?: string } };
-        if (envelope?.error || (envelope?.code && envelope.code >= 400)) {
-          outputError({
-            error: true,
-            status: envelope.code,
-            message: envelope.error?.message || envelope.error?.code || 'Forecast error',
-            details: envelope.error,
-          });
-          return;
-        }
-        output(pickOutput(envelope.data, opts.output), global);
+        const forecast = await invoke(FORECASTS.powerCurve, global as GlobalOptions, body);
+        output(pickOutput(forecast, opts.output), global);
       } catch (err) {
-        outputError((err as any)?.isAxiosError ? handleApiError(err) : err);
+        outputError(handleApiError(err));
       }
     });
 

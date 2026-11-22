@@ -62,6 +62,7 @@ Las rutas v1 son relativas al servicio; las v2, a `/api/v2`. El contrato de refe
 | `studies set tariff` | GET `/periods/tarifas-atr?pais` y `/periods/zonas?market` | GET `/reference/tariffs?market` y `/reference/zones?market` | A13, A14 |
 | `consumption ree-profiles`, `studies set consumption` | GET `/profiles/ree-profiles` | GET `/reference/ree-profiles` | A15 |
 | `consumption estimate`, `studies set consumption --annual --pattern` | POST `/profiles/consumption-estimation?<query>` + body | POST `/calculations/consumption-estimation` (un body; `annualConsumption` numérico) | A16 |
+| `curves forecast`, `connect forecast` | POST `/solar/api/forecast/power-curve` (sobre `{ code, data, error }`, también en los errores) | POST `/forecasts/power-curve` (`calculations:write`) | — (posterior al contrato) |
 | `consumption custom-tags` | GET `/profiles/custom-profiles/getTags?clientId` | GET `/reference/custom-profiles/tags` | A17 |
 | `consumption custom-profile-info` | GET `/profiles/custom-profiles/getInfo?clientId` + filtro | GET `/reference/custom-profiles?id` | A18 |
 | `consumption from-file --eredes-zip` | POST `/profiles/consumption-files-processor/portugal/eredes-zip` (multipart) | POST `/calculations/consumption-files/eredes-zip` (multipart) | A19 |
