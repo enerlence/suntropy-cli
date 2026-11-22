@@ -1,7 +1,12 @@
 import { Command, Option } from 'commander';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { v4 } from 'uuid';
-import { createServiceClient, handleApiError, assertFound, assertStudyObjectId } from '../../client.js';
+import { handleApiError, assertFound, assertStudyObjectId } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { STUDIES } from '../../api/ops/studies.js';
+import { REFERENCE } from '../../api/ops/reference.js';
+import { KITS, inventoryOps } from '../../api/ops/inventory.js';
+import { resourceByName } from '../inventory/resources.js';
 import { loadConfig, getActiveProfile } from '../../config.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
@@ -566,21 +571,14 @@ export function registerStudyBuilderCommands(studies: Command): void {
           delete study._id;
         }
 
-        const client = createServiceClient('solar', global);
-        const params: Record<string, string> = {};
-        if (opts.stateId) params.idSolarStudyState = opts.stateId;
-        if (opts.creditAmount) params.creditAmount = opts.creditAmount;
-        if (opts.saveAsNew) params.saveAsNew = 'true';
-
-        const queryString = Object.entries(params)
-          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
-          .join('&');
-        const url = `/solar-study${queryString ? '?' + queryString : ''}`;
-
-        const res = await client.post(url, study);
+        const responseData = (await invoke(STUDIES.save, global, {
+          study,
+          stateId: opts.stateId,
+          creditAmount: opts.creditAmount,
+          saveAsNew: Boolean(opts.saveAsNew),
+        })) as Record<string, unknown>;
 
         // If response contains _id or solarStudyId, update local file
-        const responseData = res.data as Record<string, unknown>;
         if (responseData?.solarStudyId) {
           study._id = responseData.solarStudyId as string;
           progress.editingSolarStudy = true;
@@ -613,9 +611,7 @@ export function registerStudyBuilderCommands(studies: Command): void {
         assertStudyObjectId(studyId);
         const filePath = resolveFile(opts);
         const global = getGlobalOpts(studies);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`/solar-study/findById/${studyId}`);
-        const study = assertFound(res.data, 'Solar study', studyId) as Study;
+        const study = assertFound(await invoke(STUDIES.get, global, { id: studyId }), 'Solar study', studyId) as Study;
 
         // Re-validate
         const { stepsProgress, missing } = evaluateSteps(study);
@@ -738,13 +734,9 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(studies);
-        const client = createServiceClient('periods', global);
-
         // Fetch tariff info
-        const tariffRes = await client.get('/tarifas-atr', {
-          params: { market: opts.market },
-        });
-        const tariffs = (Array.isArray(tariffRes.data) ? tariffRes.data : tariffRes.data?.data || []) as Record<string, unknown>[];
+        const tariffData: any = await invoke(REFERENCE.tariffs, global, { market: opts.market });
+        const tariffs = (Array.isArray(tariffData) ? tariffData : tariffData?.data || []) as Record<string, unknown>[];
         const tariffId = parseInt(opts.tariffId);
         const tariff = tariffs.find((t) => t.idTarifaATR === tariffId);
         if (!tariff) {
@@ -753,10 +745,8 @@ export function registerStudyBuilderCommands(studies: Command): void {
         }
 
         // Fetch zone info
-        const zoneRes = await client.get('/zonas', {
-          params: { market: opts.market },
-        });
-        const zones = (Array.isArray(zoneRes.data) ? zoneRes.data : zoneRes.data?.data || []) as Record<string, unknown>[];
+        const zoneData: any = await invoke(REFERENCE.zones, global, { market: opts.market });
+        const zones = (Array.isArray(zoneData) ? zoneData : zoneData?.data || []) as Record<string, unknown>[];
         const zoneId = parseInt(opts.zoneId);
         const zone = zones.find((z) => z.idZona === zoneId);
 
@@ -887,21 +877,15 @@ export function registerStudyBuilderCommands(studies: Command): void {
 
         } else if (opts.annual && opts.pattern) {
           // Generate via backend /consumption-estimation
-          const profilesClient = createServiceClient('profiles', global);
-          const params: Record<string, string> = {
+          curveData = await invoke(REFERENCE.estimate, global, {
             startDate: `${year}-01-01`,
             endDate: `${year}-12-31`,
             tariff,
             type: 'Final',
-            anualConsumption: opts.annual,
+            annualConsumption: opts.annual,
             market,
             consumptionType: opts.pattern,
-          };
-          const queryString = Object.entries(params)
-            .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
-            .join('&');
-          const res = await profilesClient.post(`/consumption-estimation?${queryString}`, {});
-          curveData = res.data;
+          });
           introductionMode = 'consumption_patterns';
 
         } else if (opts.byPeriod) {
@@ -1045,11 +1029,8 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(studies);
-        const solarClient = createServiceClient('solar', global);
-
         // Fetch full panel data
-        const panelRes = await solarClient.get(`/solar-panels/${opts.panelId}`);
-        const panel = panelRes.data;
+        const panel = await invoke(inventoryOps(resourceByName('panels')).get, global, { id: String(opts.panelId) });
 
         let distribution: { surfaceIndex: number; panelNumber: number }[] = [];
         const result = updateStudy(resolveFile(opts), (study) => {
@@ -1102,19 +1083,8 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(studies);
-        const solarClient = createServiceClient('solar', global);
-
-        // Kits use getViaFilter (no GET /:id)
-        const kitsRes = await solarClient.get('/solar-kits', { params: { unactive: true } });
-        const allKits = Array.isArray(kitsRes.data) && Array.isArray(kitsRes.data[0])
-          ? kitsRes.data[0]
-          : (Array.isArray(kitsRes.data) ? kitsRes.data : kitsRes.data?.data || []);
-        const kitId = parseInt(opts.kitId);
-        const kit = allKits.find((k: Record<string, unknown>) => k.idSolarKit === kitId);
-        if (!kit) {
-          outputError(new Error(`Kit ${kitId} not found`));
-          return;
-        }
+        // v1 has no GET /:id for kits (list + lookup); v2 does (B-69).
+        const kit = await invoke(inventoryOps(resourceByName('kits')).get, global, { id: String(parseInt(opts.kitId)) });
 
         const result = updateStudy(resolveFile(opts), (study) => {
           study.solarKit = kit;
@@ -1145,13 +1115,12 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(studies);
-        const solarClient = createServiceClient('solar', global);
         const ids = opts.inverterId.split(',').map((s: string) => parseInt(s.trim()));
+        const getInverter = inventoryOps(resourceByName('inverters')).get;
 
         const inverters: unknown[] = [];
         for (const id of ids) {
-          const res = await solarClient.get(`/solar-inverter/${id}`);
-          inverters.push(res.data);
+          inverters.push(await invoke(getInverter, global, { id: String(id) }));
         }
 
         let previousCount = 0;
@@ -1287,13 +1256,11 @@ export function registerStudyBuilderCommands(studies: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(studies);
-        const solarClient = createServiceClient('solar', global);
-
         // Fetch full custom asset data for each
+        const getAsset = inventoryOps(resourceByName('custom-assets')).get;
         const assets: unknown[] = [];
         for (const { id, quantity } of opts.asset) {
-          const res = await solarClient.get(`/custom-asset/id/${id}`);
-          assets.push({ customAsset: res.data, quantity });
+          assets.push({ customAsset: await invoke(getAsset, global, { id: String(id) }), quantity });
         }
 
         const result = updateStudy(resolveFile(opts), (study) => {
@@ -1395,7 +1362,6 @@ export function registerStudyBuilderCommands(studies: Command): void {
           return;
         }
 
-        const solarClient = createServiceClient('solar', global);
         const indicesToCalc = opts.surfaceIndex !== undefined
           ? [parseInt(opts.surfaceIndex)]
           : Array.from({ length: surfaces.length }, (_, i) => i);
@@ -1428,8 +1394,7 @@ export function registerStudyBuilderCommands(studies: Command): void {
             year: new Date().getFullYear(),
             isOptimized: false,
           };
-          const res = await solarClient.post('/solar-study/calculateProduction', body);
-          surface.production = res.data;
+          surface.production = await invoke(STUDIES.calculateProduction, global, body);
         }
 
         // Write back and validate
@@ -1777,17 +1742,12 @@ export function registerStudyBuilderCommands(studies: Command): void {
 
         // Determine mode: kit vs panel
         const useKits = opts.useKits || study.peakPowerIntroductionMode === 'solarKit';
-        const solarClient = createServiceClient('solar', global);
-
         if (useKits) {
           // ── KIT MODE ──
           const phaseNumber = (study.phaseNumber as string) || 'single_phase';
 
           // Fetch all active kits
-          const kitsRes = await solarClient.get('/solar-kits', { params: { limit: 500 } });
-          let allKits = Array.isArray(kitsRes.data) && Array.isArray(kitsRes.data[0])
-            ? kitsRes.data[0]
-            : (Array.isArray(kitsRes.data) ? kitsRes.data : kitsRes.data?.data || []);
+          let allKits: any[] = await invoke(KITS.allActive, global, undefined);
 
           // Filter by phase
           allKits = allKits.filter((k: any) => k.phaseNumber === phaseNumber && k.active !== false);
@@ -2159,18 +2119,17 @@ export function registerStudyBuilderCommands(studies: Command): void {
       try {
         assertStudyObjectId(studyId);
         const global = getGlobalOpts(studies);
-        const client = createServiceClient('solar', global);
         const comment = createComment('commented', opts.content, {
           asAlexandria: Boolean(opts.asAlexandria),
           replyToUser: opts.replyToUser,
           replyToName: opts.replyToName,
         });
-        const res = await client.post(`/solar-study/addSolarStudyComment/${studyId}`, comment);
+        const { study: savedStudy, comment: sent } = await invoke(STUDIES.comment, global, { studyId, comment });
         // The endpoint returns the FULL updated study (and an EMPTY body when the
         // study isn't found). Keep the guard so we never report a non-saved
         // comment as success, but DON'T dump the whole study: emit a compact
         // confirmation of the comment that was created.
-        const saved = assertFound(res.data, 'Solar study', studyId) as {
+        const saved = assertFound(savedStudy, 'Solar study', studyId) as {
           comments?: unknown[];
         };
         output(
@@ -2182,11 +2141,11 @@ export function registerStudyBuilderCommands(studies: Command): void {
               ? saved.comments.length
               : undefined,
             comment: {
-              type: comment.type,
-              creationUserUID: comment.creationUserUID,
-              creationTimestamp: comment.creationTimestamp,
-              aiGenerated: comment.aiGenerated ?? false,
-              content: comment.content,
+              type: sent.type,
+              creationUserUID: sent.creationUserUID,
+              creationTimestamp: sent.creationTimestamp,
+              aiGenerated: sent.aiGenerated ?? false,
+              content: sent.content,
             },
           },
           global,
@@ -2208,20 +2167,15 @@ async function generateFromProfile(
   mode: 'CONSUMPTION_BY_PERIOD' | 'MONTH_CONSUMPTION' | 'MONTHLY_BY_PERIOD',
   data: unknown,
 ): Promise<unknown> {
-  const profilesClient = createServiceClient('profiles', global);
-  const periodsClient = createServiceClient('periods', global);
-
   // 1. Fetch REE profile
-  const profileRes = await profilesClient.get('/ree-profiles', {
-    params: {
-      startDate: `${year}-01-01`,
-      endDate: `${year}-12-31`,
-      tariff,
-      type: 'Final',
-      market,
-    },
+  const profileData: any = await invoke(REFERENCE.reeProfiles, global, {
+    startDate: `${year}-01-01`,
+    endDate: `${year}-12-31`,
+    tariff,
+    type: 'Final',
+    market,
   });
-  const profile = profileRes.data?.profile || profileRes.data;
+  const profile = profileData?.profile || profileData;
   if (!profile || !Array.isArray(profile) || profile.length === 0) {
     throw new Error('Failed to fetch REE profiles');
   }
@@ -2234,16 +2188,13 @@ async function generateFromProfile(
     // Need period distribution
     const tariffIdMap: Record<string, number> = { '2.0TD': 13, '3.0TD': 14, '6.1TD': 15 };
     const tariffId = tariffIdMap[tariff] || 14;
-    const periodsRes = await periodsClient.get('/periodos', {
-      params: {
-        idTarifa: tariffId,
-        idZona: 1,
-        fechaInicio: `${year}-01-01`,
-        fechaFin: `${year}-12-31`,
-        market,
-      },
+    const periodDistribution = await invoke(REFERENCE.periods, global, {
+      tariffId,
+      zoneId: 1,
+      startDate: `${year}-01-01`,
+      endDate: `${year}-12-31`,
+      market,
     });
-    const periodDistribution = periodsRes.data;
 
     const result = applyProfileToConsumption(
       ConsumptionIntroductionModes.CONSUMPTION_BY_PERIOD,
@@ -2342,17 +2293,13 @@ async function fetchPeriodDistribution(
   const year = new Date().getFullYear();
 
   try {
-    const periodsClient = createServiceClient('periods', global);
-    const res = await periodsClient.get('/periodos', {
-      params: {
-        idTarifa: tariffId,
-        idZona: zoneId,
-        fechaInicio: `${year}-01-01`,
-        fechaFin: `${year}-12-31`,
-        market,
-      },
+    const data = await invoke(REFERENCE.periods, global, {
+      tariffId,
+      zoneId,
+      startDate: `${year}-01-01`,
+      endDate: `${year}-12-31`,
+      market,
     });
-    const data = res.data;
     if (Array.isArray(data) && data.length > 0) return data;
     return null;
   } catch {

@@ -1,0 +1,122 @@
+{
+  "theme": {
+    "idClientThemeConfig": 3,
+    "primary": "#0066ff",
+    "logoUrl": "https://x.enerlence.com/logo.svg",
+    "customURL": "app.acme.com",
+    "enableCustomTheme": true
+  },
+  "solarForm": {
+    "idSolarFormConfig": 12,
+    "clientUID": "client-1",
+    "solarFormUrl": "acme",
+    "enabled": true,
+    "formTitle": "Calcula"
+  },
+  "advanced": {
+    "idAdvancedSolarformConfig": 2,
+    "clientUID": "client-1",
+    "primaryColor": "#111111",
+    "coverTitle": "Hola",
+    "kitCategories": []
+  },
+  "publicView": {
+    "idSolarFormConfig": 12,
+    "clientUID": "client-1",
+    "solarFormUrl": "acme",
+    "enabled": true,
+    "formTitle": "Calcula",
+    "customFields": []
+  },
+  "estimate": {
+    "_id": "665000000000000000000009",
+    "selectedSolarStudyMode": "individual",
+    "name": "Simple",
+    "consumption": {
+      "identifier": "consumption",
+      "days": [
+        {
+          "date": "2026-01-01",
+          "valuesList": {
+            "0": 1
+          }
+        }
+      ]
+    }
+  },
+  "projects": [
+    {
+      "id": 5,
+      "name": "Obra",
+      "description": "d",
+      "visibility": "CLIENT",
+      "files": [
+        {
+          "id": 9,
+          "name": "plano.pdf",
+          "url": "https://documents.enerlence.com/f/9",
+          "size": 10,
+          "mimeType": "application/pdf"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Otra",
+      "visibility": "CLIENT"
+    }
+  ],
+  "project": {
+    "id": 5,
+    "name": "Obra",
+    "description": "d",
+    "visibility": "CLIENT",
+    "files": [
+      {
+        "id": 9,
+        "name": "plano.pdf",
+        "url": "https://documents.enerlence.com/f/9",
+        "size": 10,
+        "mimeType": "application/pdf"
+      }
+    ]
+  },
+  "file": {
+    "id": 9,
+    "name": "plano.pdf",
+    "url": "https://documents.enerlence.com/f/9",
+    "size": 10,
+    "mimeType": "application/pdf"
+  },
+  "shareable": {
+    "idShareable": 4,
+    "uid": "abc",
+    "url": "https://share.enerlence.com/abc",
+    "elementId": "665000000000000000000001",
+    "elementType": "solarStudy",
+    "privacy": "PUBLIC"
+  },
+  "templates": [
+    {
+      "_id": "680000000000000000000001",
+      "templateName": "Plantilla A"
+    }
+  ],
+  "geocode": {
+    "status": "OK",
+    "count": 1,
+    "results": [
+      {
+        "formattedAddress": "Calle Mayor 1, Madrid",
+        "lat": 40.41,
+        "lng": -3.7,
+        "locationType": "ROOFTOP",
+        "placeId": "p1",
+        "types": [
+          "street_address"
+        ],
+        "addressComponents": []
+      }
+    ]
+  }
+}

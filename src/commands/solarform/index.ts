@@ -1,6 +1,7 @@
 import { Command } from 'commander';
-import { readFileSync } from 'fs';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { SOLARFORM, SOLARFORM_CONFIG } from '../../api/ops/settings.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
@@ -94,12 +95,14 @@ export function registerSolarformCommands(program: Command): void {
       'Consumption mode: monthlyConsumption (kWh) or monthlySpending (EUR)\n' +
       'Excesses modes: PPA, gridSelling, noInjection, virtualBattery\n\n' +
       'Examples:\n' +
-      '  suntropy solarform simple --region "Andalucía" --sub-region "Sevilla" --consumption 5000\n' +
-      '  suntropy solarform simple --region "Cataluña" --sub-region "Barcelona" --consumption 300 --consumption-mode monthlySpending --save\n' +
-      '  suntropy solarform simple --region "Madrid" --sub-region "Madrid" --consumption 8000 --pattern Domestic --kit-id abc123 --save'
+      '  suntropy solarform simple --region andalucia --sub-region sevilla --consumption 5000\n' +
+      '  suntropy solarform simple --region cataluña --sub-region barcelona --consumption 300 --consumption-mode monthlySpending --save\n' +
+      '  suntropy solarform simple --region madrid --sub-region madrid --consumption 8000 --pattern Domestic --kit-id abc123 --save\n\n' +
+      'Region and sub-region are the `name` of the periods service (lowercase, e.g. andalucia/sevilla),\n' +
+      'not the label («Andalucía»): an unknown one is 422 REGION_NOT_FOUND / SUBREGION_NOT_FOUND.'
     )
-    .requiredOption('--region <name>', 'Region name (must exist in database)')
-    .requiredOption('--sub-region <name>', 'Sub-region name')
+    .requiredOption('--region <name>', 'Region name as stored in the database (e.g. andalucia)')
+    .requiredOption('--sub-region <name>', 'Sub-region name as stored in the database (e.g. sevilla)')
     .requiredOption('--consumption <value>', 'Consumption value (kWh or EUR depending on --consumption-mode)')
     .option('--pattern <name>', 'Consumption pattern: Balance, Nightly, Morning, Afternoon, Domestic, Commercial', 'Balance')
     .option('--consumption-mode <mode>', 'monthlyConsumption (kWh) or monthlySpending (EUR)', 'monthlyConsumption')
@@ -113,8 +116,6 @@ export function registerSolarformCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(solarform);
-        const client = createServiceClient('solar', global);
-
         const body: Record<string, unknown> = {
           region: opts.region,
           subRegion: opts.subRegion,
@@ -132,14 +133,7 @@ export function registerSolarformCommands(program: Command): void {
         if (opts.kitId) params.solarKitId = opts.kitId;
         if (opts.excessesMode) params.excessesCompensationMode = opts.excessesMode;
 
-        const queryString = Object.entries(params)
-          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
-          .join('&');
-
-        const url = `/api/solar-form/simple${queryString ? '?' + queryString : ''}`;
-        const res = await client.post(url, body);
-
-        const study = unwrapPublicApiResponse(res.data);
+        const study = unwrapPublicApiResponse(await invoke(SOLARFORM.simple, global, { body, query: params }));
         const result = opts.raw ? study : compactStudyOutput(study);
         output(result, { ...global, save: opts.saveFile || global.save });
       } catch (err) {
@@ -173,8 +167,6 @@ export function registerSolarformCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(solarform);
-        const client = createServiceClient('solar', global);
-
         const body = await parseData(opts.data);
         if (!body) {
           outputError(new Error('--data is required. Pass JSON or - for stdin.'));
@@ -185,14 +177,7 @@ export function registerSolarformCommands(program: Command): void {
         if (opts.save) params.save = 'true';
         if (opts.email) params.email = opts.email;
 
-        const queryString = Object.entries(params)
-          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
-          .join('&');
-
-        const url = `/api/solar-form${queryString ? '?' + queryString : ''}`;
-        const res = await client.post(url, body);
-
-        const study = unwrapPublicApiResponse(res.data);
+        const study = unwrapPublicApiResponse(await invoke(SOLARFORM.calculate, global, { body, query: params }));
         if (!study || (typeof study === 'object' && !Array.isArray(study) && !('selectedSolarStudyMode' in (study as Record<string, unknown>)))) {
           outputError(new Error('API returned no study data. The /api/solar-form endpoint requires a complete body with: center, surfaces, consumptionMode, and typically locationMode. Use "solarform simple" for minimal-parameter study creation.'));
           return;
@@ -214,9 +199,7 @@ export function registerSolarformCommands(program: Command): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(solarform);
-        const client = createServiceClient('solar', global);
-        const res = await client.get('/solar-form/solar-form-config');
-        output(res.data, global);
+        output(await invoke(SOLARFORM_CONFIG.publicView, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -236,18 +219,11 @@ export function registerSolarformCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(solarform);
-        const client = createServiceClient('solar', global);
-
         if (opts.update) {
-          const body = await parseData(opts.data);
-          const res = await client.put('/solar-form/solar-form-statistics', body);
-          output(res.data, global);
+          output(await invoke(SOLARFORM.statisticsUpdate, global, { body: await parseData(opts.data) }), global);
         } else if (opts.create) {
           const body = (await parseData(opts.data)) || {};
-          const params: Record<string, string> = {};
-          if (opts.statsId) params.statsId = opts.statsId;
-          const res = await client.post('/solar-form/solar-form-statistics', body, { params });
-          output(res.data, global);
+          output(await invoke(SOLARFORM.statisticsCreate, global, { body, statsId: opts.statsId }), global);
         } else {
           outputError(new Error('Specify --create or --update'));
         }

@@ -1,5 +1,7 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { TEMPLATES } from '../../api/ops/settings.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
@@ -34,17 +36,10 @@ export function registerTemplatesCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(templates);
-        const client = createServiceClient('solar', global);
-
-        const params: Record<string, string> = {};
         // 'generic' means the untyped templates -> omit the identifier so the
         // backend forwards no filter (sharing returns templateIdentifier: null).
-        if (opts.type && opts.type !== 'generic') {
-          params.templateIdentifier = opts.type;
-        }
-
-        const res = await client.get('/api/templates', { params });
-        output(res.data, global);
+        const templateIdentifier = opts.type && opts.type !== 'generic' ? opts.type : undefined;
+        output(await invoke(TEMPLATES.list, global, { templateIdentifier }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }

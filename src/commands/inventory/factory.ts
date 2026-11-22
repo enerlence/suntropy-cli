@@ -1,52 +1,33 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { readFileSync } from 'fs';
+import { handleApiError } from '../../client.js';
 import { output, outputError, outputPaginated, type OutputOptions } from '../../output.js';
+import { invoke, type GlobalOptions } from '../../api/core.js';
+import { inventoryOps, type ResourceConfig } from '../../api/ops/inventory.js';
 
-export interface ResourceConfig {
-  /** Command name (e.g. 'panels') */
-  name: string;
-  /** Singular display name (e.g. 'solar panel') */
-  singular: string;
-  /** API base path (e.g. '/solar-panels') */
-  basePath: string;
-  /** ID field name in the entity (e.g. 'solarPanelId') */
-  idField: string;
-  /** Fields to show in list view (summary) */
-  listFields: string[];
-  /** POST path for advanced filter, if different from basePath + '/filter' */
-  filterPath?: string;
-  /** Batch delete path suffix */
-  batchDeletePath?: string;
-  /** PUT uses body without ID in URL (some endpoints use PUT / with body containing id) */
-  putBodyOnly?: boolean;
-  /** Backend service */
-  service?: 'solar' | 'templates' | 'security';
-  /** Custom GET path pattern. Use ':id' as placeholder (e.g. '/custom-asset/id/:id') */
-  getPath?: string;
-  /** Use POST filter to get by ID (when no GET :id endpoint exists) */
-  getViaFilter?: boolean;
-}
+export type { ResourceConfig } from '../../api/ops/inventory.js';
 
-function getGlobalOpts(cmd: Command): OutputOptions & { server?: string; token?: string; profile?: string; verbose?: boolean } {
+export function getGlobalOpts(cmd: Command): OutputOptions & GlobalOptions {
   let root = cmd;
   while (root.parent) root = root.parent;
-  return root.opts() as any;
+  return root.opts() as OutputOptions & GlobalOptions;
 }
 
-function parseData(data: string | undefined): Record<string, unknown> | undefined {
+/** JSON from `--data` / `--query`, or from stdin with `-`. */
+export function parseData(data: string | undefined): Record<string, any> | undefined {
   if (!data) return undefined;
-  if (data === '-') {
-    // Read from stdin - synchronous for simplicity
-    const { readFileSync } = require('fs');
-    const input = readFileSync(0, 'utf-8');
-    return JSON.parse(input);
-  }
+  if (data === '-') return JSON.parse(readFileSync(0, 'utf-8'));
   return JSON.parse(data);
 }
 
+/**
+ * `inventory <resource> list|get|create|update|delete|delete-batch|filter`.
+ * The routes of each version live in `inventoryOps` (src/api/ops/inventory.ts):
+ * a user JWT goes to the v1 service routes, a `sun_` key to `/api/v2/inventory`.
+ */
 export function createResourceCommands(cfg: ResourceConfig): Command {
   const cmd = new Command(cfg.name).description(`Manage ${cfg.singular}s`);
-  const service = cfg.service || 'solar';
+  const ops = inventoryOps(cfg);
 
   // --- list ---
   cmd
@@ -58,40 +39,16 @@ export function createResourceCommands(cfg: ResourceConfig): Command {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(cmd);
-        const client = createServiceClient(service, global);
-        const params: Record<string, unknown> = {
-          limit: parseInt(opts.limit),
-          offset: parseInt(opts.offset),
-        };
-        if (!opts.activeOnly) params.unactive = true;
-
-        const res = await client.get(cfg.basePath, { params });
-        // API may return: [items[], totalCount] tuple, {data: [], total} object, or plain array
-        let data: unknown[];
-        let total: number;
-        if (Array.isArray(res.data) && res.data.length >= 2 && Array.isArray(res.data[0]) && typeof res.data[1] === 'number') {
-          // Tuple format: [items[], totalCount]
-          data = res.data[0];
-          total = res.data[1];
-        } else if (Array.isArray(res.data)) {
-          data = res.data;
-          total = res.data.length;
-        } else {
-          data = res.data?.data || [];
-          total = res.data?.total ?? data.length;
-        }
+        const limit = parseInt(opts.limit);
+        const offset = parseInt(opts.offset);
+        const page = await invoke(ops.list, global, { limit, offset, activeOnly: Boolean(opts.activeOnly) });
 
         // Apply list field summary unless user specified --fields
         const outOpts: OutputOptions = { ...global };
         if (!global.fields && cfg.listFields.length > 0) {
           outOpts.fields = [cfg.idField, ...cfg.listFields].join(',');
         }
-
-        if (Array.isArray(data)) {
-          outputPaginated(data, total, parseInt(opts.limit), parseInt(opts.offset), outOpts);
-        } else {
-          output(data, outOpts);
-        }
+        outputPaginated(page.items, page.total, limit, offset, outOpts);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -104,20 +61,7 @@ export function createResourceCommands(cfg: ResourceConfig): Command {
     .action(async (id) => {
       try {
         const global = getGlobalOpts(cmd);
-        const client = createServiceClient(service, global);
-        if (cfg.getViaFilter) {
-          // No GET :id endpoint — fetch all and filter client-side
-          const res = await client.get(cfg.basePath, { params: { unactive: true } });
-          const all = Array.isArray(res.data) ? res.data : (Array.isArray(res.data?.[0]) ? res.data[0] : res.data?.data || []);
-          const idNum = parseInt(id);
-          const item = all.find((r: Record<string, unknown>) => r[cfg.idField] === idNum || r[cfg.idField] === id);
-          if (!item) { outputError(new Error(`${cfg.singular} with ${cfg.idField}=${id} not found`)); return; }
-          output(item, global);
-        } else {
-          const url = cfg.getPath ? cfg.getPath.replace(':id', id) : `${cfg.basePath}/${id}`;
-          const res = await client.get(url);
-          output(res.data, global);
-        }
+        output(await invoke(ops.get, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -131,10 +75,7 @@ export function createResourceCommands(cfg: ResourceConfig): Command {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(cmd);
-        const client = createServiceClient(service, global);
-        const body = parseData(opts.data);
-        const res = await client.post(cfg.basePath, body);
-        output(res.data, global);
+        output(await invoke(ops.create, global, { body: parseData(opts.data) }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -148,21 +89,7 @@ export function createResourceCommands(cfg: ResourceConfig): Command {
     .action(async (id, opts) => {
       try {
         const global = getGlobalOpts(cmd);
-        const client = createServiceClient(service, global);
-        const body = parseData(opts.data);
-        if (cfg.putBodyOnly) {
-          // The id goes in the body for these resources; send it as a number so
-          // TypeORM matches the integer primary key on the other side.
-          const numericId = Number(id);
-          const res = await client.put(cfg.basePath, {
-            ...body,
-            [cfg.idField]: Number.isFinite(numericId) ? numericId : id,
-          });
-          output(res.data, global);
-        } else {
-          const res = await client.put(`${cfg.basePath}/${id}`, body);
-          output(res.data, global);
-        }
+        output(await invoke(ops.update, global, { id, body: parseData(opts.data) }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -171,13 +98,11 @@ export function createResourceCommands(cfg: ResourceConfig): Command {
   // --- delete ---
   cmd
     .command('delete <id>')
-    .description(`Delete a ${cfg.singular}`)
+    .description(`Delete a ${cfg.singular}. Output: {"success":true,"deleted":"<id>"}`)
     .action(async (id) => {
       try {
         const global = getGlobalOpts(cmd);
-        const client = createServiceClient(service, global);
-        const res = await client.delete(`${cfg.basePath}/${id}`);
-        output(res.data ?? { success: true, deleted: id }, global);
+        output(await invoke(ops.delete, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -187,15 +112,13 @@ export function createResourceCommands(cfg: ResourceConfig): Command {
   if (cfg.batchDeletePath) {
     cmd
       .command('delete-batch')
-      .description(`Batch delete ${cfg.singular}s`)
+      .description(`Batch delete ${cfg.singular}s. Output: {"success":true,"deleted":<n>}`)
       .requiredOption('--ids <ids>', 'Comma-separated IDs')
       .action(async (opts) => {
         try {
           const global = getGlobalOpts(cmd);
-          const client = createServiceClient(service, global);
-          const ids = opts.ids.split(',').map((s: string) => s.trim());
-          const res = await client.post(`${cfg.basePath}/${cfg.batchDeletePath}`, ids);
-          output(res.data ?? { success: true, deleted: ids.length }, global);
+          const ids = opts.ids.split(',').map((s: string) => s.trim()).filter(Boolean);
+          output(await invoke(ops.deleteBatch, global, { ids }), global);
         } catch (err) {
           outputError(handleApiError(err));
         }
@@ -205,24 +128,17 @@ export function createResourceCommands(cfg: ResourceConfig): Command {
   // --- filter ---
   cmd
     .command('filter')
-    .description(`Advanced filter for ${cfg.singular}s. Pass filter query as JSON.`)
+    .description(`Advanced filter for ${cfg.singular}s (active ones). Pass filter query as JSON.`)
     .requiredOption('--query <json>', 'Filter query JSON (or - for stdin)')
     .option('--limit <n>', 'Max results', '20')
     .option('--offset <n>', 'Skip results', '0')
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(cmd);
-        const client = createServiceClient(service, global);
-        const query = parseData(opts.query);
-        const filterUrl = cfg.filterPath || `${cfg.basePath}/filter`;
-        const res = await client.post(filterUrl, {
-          ...query,
-          limit: parseInt(opts.limit),
-          offset: parseInt(opts.offset),
-        });
-        const data = Array.isArray(res.data) ? res.data : res.data?.data || res.data;
-        const total = res.data?.total ?? (Array.isArray(data) ? data.length : 0);
-        outputPaginated(data, total, parseInt(opts.limit), parseInt(opts.offset), global);
+        const limit = parseInt(opts.limit);
+        const offset = parseInt(opts.offset);
+        const page = await invoke(ops.filter, global, { query: parseData(opts.query) ?? {}, limit, offset });
+        outputPaginated(page.items, page.total, limit, offset, global);
       } catch (err) {
         outputError(handleApiError(err));
       }

@@ -14,6 +14,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*", "bin/**/*"],
+  "include": ["src/**/*", "bin/**/*", "scripts/**/*"],
   "exclude": ["node_modules", "dist"]
 }

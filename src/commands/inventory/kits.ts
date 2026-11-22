@@ -1,38 +1,30 @@
 import { Command } from 'commander';
-import { createResourceCommands } from './factory.js';
-import { createServiceClient, handleApiError } from '../../client.js';
-import { output, outputError, type OutputOptions } from '../../output.js';
+import { createResourceCommands, getGlobalOpts, parseData } from './factory.js';
+import { handleApiError } from '../../client.js';
+import { output, outputError } from '../../output.js';
+import { invoke, type GlobalOptions, type Operation } from '../../api/core.js';
+import { inventoryOps, KITS, KIT_BATTERIES, KIT_INVERTERS, KIT_PANELS } from '../../api/ops/inventory.js';
+import { KITS_RESOURCE, resourceByName } from './resources.js';
 
-function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
-  let root = cmd;
-  while (root.parent) root = root.parent;
-  return root.opts() as any;
-}
-
-function parseData(data: string): Record<string, unknown> {
-  if (data === '-') {
-    const { readFileSync } = require('fs');
-    return JSON.parse(readFileSync(0, 'utf-8'));
+/** Whether `op` finds `id`: a 404 or an empty body is «missing», anything else that fails is «error». */
+async function lookup(op: Operation<{ id: string }, unknown>, global: GlobalOptions, id: string): Promise<'found' | 'missing' | 'error'> {
+  try {
+    const item = await invoke(op, global, { id });
+    const empty = item == null || (typeof item === 'object' && Object.keys(item as object).length === 0);
+    return empty ? 'missing' : 'found';
+  } catch (err) {
+    const api = handleApiError(err);
+    return api.status === 404 || api.code === 'NOT_FOUND' || /not found/i.test(api.message) ? 'missing' : 'error';
   }
-  return JSON.parse(data);
 }
 
 export function registerKitsCommands(inventory: Command): void {
   // Base kit CRUD via factory
-  const kits = createResourceCommands({
-    name: 'kits',
-    singular: 'solar kit',
-    basePath: '/solar-kits',
-    idField: 'idSolarKit',
-    listFields: ['identifier', 'peakPower', 'panelNumber', 'inverterNumber', 'price', 'totalPrice', 'phaseNumber', 'active'],
-    filterPath: '/solar-kits/filters',
-    batchDeletePath: 'delete-batch-solar-kits',
-    getViaFilter: true,
-  });
+  const kits = createResourceCommands(KITS_RESOURCE);
 
   // Remove factory-generated 'create' — use 'assemble' instead for safe kit creation
   const kitsCreateIdx = kits.commands.findIndex((c: Command) => c.name() === 'create');
-  if (kitsCreateIdx !== -1) kits.commands.splice(kitsCreateIdx, 1);
+  if (kitsCreateIdx !== -1) (kits.commands as Command[]).splice(kitsCreateIdx, 1);
 
   // --- archive ---
   kits
@@ -41,9 +33,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (kitId) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.put(`/solar-kits/archive/${kitId}`);
-        output(res.data ?? { success: true, archived: kitId }, global);
+        output(await invoke(KITS.archive, global, { id: kitId }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -60,9 +50,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.get('/solar-kits/solar-panels', { params: { limit: opts.limit, offset: opts.offset } });
-        output(res.data, global);
+        output(await invoke(KIT_PANELS.list, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -74,11 +62,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (id) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        // Use filter to get by ID since there's no direct GET by ID
-        const res = await client.post('/solar-kits/solar-panels/filter', { idKitSolarPanel: id });
-        const data = Array.isArray(res.data) ? res.data[0] : res.data?.data?.[0] || res.data;
-        output(data, global);
+        output(await invoke(KIT_PANELS.get, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -91,9 +75,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.post('/solar-kits/solar-panels', parseData(opts.data));
-        output(res.data, global);
+        output(await invoke(KIT_PANELS.create, global, { body: parseData(opts.data) ?? {} }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -106,9 +88,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (id, opts) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.put(`/solar-kits/solar-panels/${id}`, parseData(opts.data));
-        output(res.data, global);
+        output(await invoke(KIT_PANELS.update, global, { id, body: parseData(opts.data) ?? {} }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -120,9 +100,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (id) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.delete(`/solar-kits/solar-panels/${id}`);
-        output(res.data ?? { success: true, deleted: id }, global);
+        output(await invoke(KIT_PANELS.delete, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -134,9 +112,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (kitPanelId) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`/solar-kits/solar-panels/findFeaturedSolarKits/${kitPanelId}`);
-        output(res.data, global);
+        output(await invoke(KIT_PANELS.featured, global, { id: kitPanelId }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -153,9 +129,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.get('/solar-kits/inverters', { params: { limit: opts.limit, offset: opts.offset } });
-        output(res.data, global);
+        output(await invoke(KIT_INVERTERS.list, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -168,9 +142,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.post('/solar-kits/inverters', parseData(opts.data));
-        output(res.data, global);
+        output(await invoke(KIT_INVERTERS.create, global, { body: parseData(opts.data) ?? {} }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -183,9 +155,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (id, opts) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.put(`/solar-kits/inverters/${id}`, parseData(opts.data));
-        output(res.data, global);
+        output(await invoke(KIT_INVERTERS.update, global, { id, body: parseData(opts.data) ?? {} }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -197,9 +167,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (id) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.delete(`/solar-kits/inverters/${id}`);
-        output(res.data ?? { success: true, deleted: id }, global);
+        output(await invoke(KIT_INVERTERS.delete, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -211,9 +179,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (kitInverterId) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`/solar-kits/inverters/findFeaturedSolarKits/${kitInverterId}`);
-        output(res.data, global);
+        output(await invoke(KIT_INVERTERS.featured, global, { id: kitInverterId }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -230,9 +196,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.get('/solar-kits/batteries', { params: { limit: opts.limit, offset: opts.offset } });
-        output(res.data, global);
+        output(await invoke(KIT_BATTERIES.list, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -245,9 +209,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.post('/solar-kits/batteries', parseData(opts.data));
-        output(res.data, global);
+        output(await invoke(KIT_BATTERIES.create, global, { body: parseData(opts.data) ?? {} }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -259,9 +221,7 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (id) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
-        const res = await client.delete(`/solar-kits/batteries/${id}`);
-        output(res.data ?? { success: true, deleted: id }, global);
+        output(await invoke(KIT_BATTERIES.delete, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -296,75 +256,39 @@ export function registerKitsCommands(inventory: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(kits);
-        const client = createServiceClient('solar', global);
 
-        // Validate component IDs exist as kit entities before assembling
+        // Validate component IDs exist before assembling: kit panel, kit
+        // inverter and inventory battery (the kit's `battery` is a Battery).
         const validationErrors: string[] = [];
-
-        if (opts.panel) {
-          try {
-            const res = await client.post('/solar-kits/solar-panels/filter', { idKitSolarPanel: parseInt(opts.panel) });
-            const data = Array.isArray(res.data) ? res.data : res.data?.data || [];
-            if (data.length === 0) {
-              validationErrors.push(
-                `Panel ID ${opts.panel} is not a KitSolarPanel. ` +
-                `Use "suntropy inventory kits panels list" to see available kit panels, ` +
-                `or "suntropy inventory kits panels create --data '{...}'" to create one first.`
-              );
-            }
-          } catch {
-            validationErrors.push(
-              `Could not validate panel ID ${opts.panel}. ` +
-              `Make sure it is a KitSolarPanel ID (not a regular inventory panel). ` +
-              `Use "suntropy inventory kits panels list" to see available kit panels.`
-            );
-          }
-        }
-
-        if (opts.inverter) {
-          try {
-            const res = await client.get('/solar-kits/inverters', { params: { limit: 200 } });
-            const inverters = Array.isArray(res.data) ? res.data : res.data?.data || [];
-            const found = inverters.find((inv: Record<string, unknown>) =>
-              String(inv.idKitInverter) === String(opts.inverter)
-            );
-            if (!found) {
-              validationErrors.push(
-                `Inverter ID ${opts.inverter} is not a KitInverter. ` +
-                `Use "suntropy inventory kits inverters list" to see available kit inverters, ` +
-                `or "suntropy inventory kits inverters create --data '{...}'" to create one first.`
-              );
-            }
-          } catch {
-            validationErrors.push(
-              `Could not validate inverter ID ${opts.inverter}. ` +
-              `Make sure it is a KitInverter ID (not a regular inventory inverter). ` +
-              `Use "suntropy inventory kits inverters list" to see available kit inverters.`
-            );
-          }
-        }
-
-        if (opts.battery) {
-          try {
-            const res = await client.get('/solar-kits/batteries', { params: { limit: 200 } });
-            const batteries = Array.isArray(res.data) ? res.data : res.data?.data || [];
-            const found = batteries.find((bat: Record<string, unknown>) =>
-              String(bat.idKitBattery) === String(opts.battery)
-            );
-            if (!found) {
-              validationErrors.push(
-                `Battery ID ${opts.battery} is not a KitBattery. ` +
-                `Use "suntropy inventory kits batteries list" to see available kit batteries, ` +
-                `or "suntropy inventory kits batteries create --data '{...}'" to create one first.`
-              );
-            }
-          } catch {
-            validationErrors.push(
-              `Could not validate battery ID ${opts.battery}. ` +
-              `Make sure it is a KitBattery ID (not a regular inventory battery). ` +
-              `Use "suntropy inventory kits batteries list" to see available kit batteries.`
-            );
-          }
+        const checks: Array<[string | undefined, Operation<{ id: string }, unknown>, string, string]> = [
+          [
+            opts.panel,
+            KIT_PANELS.get,
+            `Panel ID ${opts.panel} is not a KitSolarPanel. Use "suntropy inventory kits panels list" to see available kit panels, ` +
+              `or "suntropy inventory kits panels create --data '{...}'" to create one first.`,
+            `Could not validate panel ID ${opts.panel}. Make sure it is a KitSolarPanel ID (not a regular inventory panel). ` +
+              `Use "suntropy inventory kits panels list" to see available kit panels.`,
+          ],
+          [
+            opts.inverter,
+            KIT_INVERTERS.get,
+            `Inverter ID ${opts.inverter} is not a KitInverter. Use "suntropy inventory kits inverters list" to see available kit inverters, ` +
+              `or "suntropy inventory kits inverters create --data '{...}'" to create one first.`,
+            `Could not validate inverter ID ${opts.inverter}. Make sure it is a KitInverter ID (not a regular inventory inverter). ` +
+              `Use "suntropy inventory kits inverters list" to see available kit inverters.`,
+          ],
+          [
+            opts.battery,
+            inventoryOps(resourceByName('batteries')).get,
+            `Battery ID ${opts.battery} is not a battery of your inventory (batteryId). Use "suntropy inventory batteries list" to see them.`,
+            `Could not validate battery ID ${opts.battery}. Use "suntropy inventory batteries list" to see your batteries.`,
+          ],
+        ];
+        for (const [id, op, missing, failed] of checks) {
+          if (!id) continue;
+          const found = await lookup(op, global, id);
+          if (found === 'missing') validationErrors.push(missing);
+          if (found === 'error') validationErrors.push(failed);
         }
 
         if (validationErrors.length > 0) {
@@ -372,7 +296,7 @@ export function registerKitsCommands(inventory: Command): void {
             error: true,
             message: 'Kit assembly validation failed',
             issues: validationErrors,
-            hint: 'The assemble command requires KitSolarPanel, KitInverter, and KitBattery IDs — these are kit-specific entities, not regular inventory items.',
+            hint: 'The assemble command requires KitSolarPanel and KitInverter IDs (kit-specific entities) and a battery from your inventory.',
           });
           return;
         }
@@ -401,8 +325,7 @@ export function registerKitsCommands(inventory: Command): void {
           }));
         }
 
-        const res = await client.post('/solar-kits', body);
-        output(res.data, global);
+        output(await invoke(KITS.assemble, global, { body }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }

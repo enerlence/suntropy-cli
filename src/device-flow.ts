@@ -70,7 +70,32 @@ export function defaultDeviceName(): string {
   return name || 'CLI';
 }
 
-/** "a, b" → ["a", "b"]; undefined when nothing is given (gateway defaults). */
+/**
+ * Scopes `auth login --web` asks for by default: every API v2 scope a CLI
+ * command uses (contract §5, «CLI»). Not `lidar:*` nor `analytics:read`.
+ * `--scopes` can still ask for fewer.
+ */
+export const DEFAULT_WEB_SCOPES: readonly string[] = [
+  'studies:read',
+  'studies:write',
+  'inventory:read',
+  'inventory:write',
+  'calculations:read',
+  'calculations:write',
+  'documents:read',
+  'documents:write',
+  'reference:read',
+  'leadgen:read',
+  'leadgen:write',
+  'credits:read',
+  'settings:read',
+  'settings:write',
+  'notifications:write',
+  'projects:read',
+  'projects:write',
+];
+
+/** "a, b" → ["a", "b"]; undefined when nothing is given (the caller picks the default). */
 export function parseScopes(value: string | undefined): string[] | undefined {
   if (value === undefined) return undefined;
   const scopes = value.split(',').map((s) => s.trim()).filter(Boolean);

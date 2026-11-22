@@ -1,9 +1,11 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError, assertFound, assertStudyObjectId } from '../../client.js';
+import { handleApiError, assertFound, assertStudyObjectId } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { STUDIES } from '../../api/ops/studies.js';
 import { output, outputError, outputPaginated, type OutputOptions } from '../../output.js';
 import { registerStudyBuilderCommands } from './builder.js';
 
-function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
+function getGlobalOpts(cmd: Command): OutputOptions & Record<string, any> {
   let root = cmd;
   while (root.parent) root = root.parent;
   return root.opts() as any;
@@ -160,36 +162,22 @@ export function registerStudiesCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(studies);
-        const client = createServiceClient('solar', global);
-        const body: Record<string, unknown> = {
-          limit: parseInt(opts.limit),
-          offset: parseInt(opts.offset),
-        };
-        if (opts.state) body.state = opts.state;
-        if (opts.clientName) body.clientName = opts.clientName;
-        if (opts.from) body.fromDate = opts.from;
-        if (opts.to) body.toDate = opts.to;
-
-        const res = await client.post('/solar-study/findWithPaginationAndFilters', body);
-        // Response: [items[], totalCount, ...] tuple or {data, total}
-        let data: unknown[];
-        let total: number;
-        if (Array.isArray(res.data) && res.data.length >= 2 && Array.isArray(res.data[0]) && typeof res.data[1] === 'number') {
-          data = res.data[0];
-          total = res.data[1];
-        } else if (Array.isArray(res.data)) {
-          data = res.data;
-          total = res.data.length;
-        } else {
-          data = res.data?.data || res.data?.solarStudiesMetadata || [];
-          total = res.data?.total ?? res.data?.count ?? (Array.isArray(data) ? data.length : 0);
-        }
+        const limit = parseInt(opts.limit);
+        const offset = parseInt(opts.offset);
+        const page = await invoke(STUDIES.list, global, {
+          limit,
+          offset,
+          state: opts.state,
+          clientName: opts.clientName,
+          from: opts.from,
+          to: opts.to,
+        });
 
         const outOpts: OutputOptions = { ...global };
         if (!global.fields) {
           outOpts.fields = 'idSolarStudyMetadata,solarStudyId,clientName,peakPower,anualProduction,anualConsumption,totalCost,sellingPrice,currentState,creationTimestamp';
         }
-        outputPaginated(data, total, parseInt(opts.limit), parseInt(opts.offset), outOpts);
+        outputPaginated(page.items, page.total, limit, offset, outOpts);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -206,12 +194,7 @@ export function registerStudiesCommands(program: Command): void {
         // the same way as `get`; the default path uses a numeric metadata id.
         if (opts.byStudyId) assertStudyObjectId(id);
         const global = getGlobalOpts(studies);
-        const client = createServiceClient('solar', global);
-        const path = opts.byStudyId
-          ? `/solar-study/metadata/solar-study-id/${id}`
-          : `/solar-study/findSolarStudyMetadataById/${id}`;
-        const res = await client.get(path);
-        output(res.data, global);
+        output(await invoke(opts.byStudyId ? STUDIES.metadataByStudyId : STUDIES.metadata, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -234,9 +217,7 @@ export function registerStudiesCommands(program: Command): void {
       try {
         assertStudyObjectId(studyId);
         const global = getGlobalOpts(studies);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`/solar-study/findById/${studyId}`);
-        const study = assertFound(res.data, 'Solar study', studyId) as Record<string, unknown>;
+        const study = assertFound(await invoke(STUDIES.get, global, { id: studyId }), 'Solar study', studyId) as Record<string, unknown>;
         // If the user passes --fields, they have already expressed exactly what
         // they want — don't pre-filter the study, let output() select from the
         // full object. Otherwise apply the expand-based summary filter.
@@ -277,9 +258,7 @@ export function registerStudiesCommands(program: Command): void {
       try {
         assertStudyObjectId(studyId);
         const global = getGlobalOpts(studies);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`/solar-study/findById/${studyId}`);
-        const study = assertFound(res.data, 'Solar study', studyId) as Record<string, unknown>;
+        const study = assertFound(await invoke(STUDIES.get, global, { id: studyId }), 'Solar study', studyId) as Record<string, unknown>;
 
         // Extract the requested curve
         let curveData: unknown;
@@ -367,7 +346,6 @@ export function registerStudiesCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(studies);
-        const client = createServiceClient('solar', global);
         const body = {
           lat: parseFloat(opts.lat),
           long: parseFloat(opts.lon),
@@ -378,8 +356,7 @@ export function registerStudiesCommands(program: Command): void {
           year: parseInt(opts.year),
           isOptimized: false,
         };
-        const res = await client.post('/solar-study/calculateProduction', body);
-        output(res.data, { ...global, save: opts.save || global.save });
+        output(await invoke(STUDIES.calculateProduction, global, body), { ...global, save: opts.save || global.save });
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -394,11 +371,7 @@ export function registerStudiesCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(studies);
-        const client = createServiceClient('solar', global);
-        const res = await client.get('/solar-study/optimizeSurfaces', {
-          params: { lat: parseFloat(opts.lat), lon: parseFloat(opts.lon) },
-        });
-        output(res.data, global);
+        output(await invoke(STUDIES.optimalAngles, global, { lat: parseFloat(opts.lat), lon: parseFloat(opts.lon) }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }

@@ -1,5 +1,7 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { GEOCODE } from '../../api/ops/settings.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
@@ -89,12 +91,8 @@ export function registerGeocodeCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(geocode);
-        const client = createServiceClient('solar', global);
-        const res = await client.get<PublicApiResponse<GeocodeResponse>>(
-          '/api/geocode',
-          { params: { address: opts.address, country: opts.country } },
-        );
-        emit(res.data, opts.all, { address: opts.address }, global);
+        const envelope = await invoke(GEOCODE.resolve, global, { address: opts.address, country: opts.country });
+        emit(envelope as PublicApiResponse<GeocodeResponse>, opts.all, { address: opts.address }, global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -114,12 +112,8 @@ export function registerGeocodeCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(geocode);
-        const client = createServiceClient('solar', global);
-        const res = await client.get<PublicApiResponse<GeocodeResponse>>(
-          '/api/reverse-geocode',
-          { params: { lat: opts.lat, lng: opts.lng } },
-        );
-        emit(res.data, opts.all, { lat: opts.lat, lng: opts.lng }, global);
+        const envelope = await invoke(GEOCODE.reverse, global, { lat: opts.lat, lng: opts.lng });
+        emit(envelope as PublicApiResponse<GeocodeResponse>, opts.all, { lat: opts.lat, lng: opts.lng }, global);
       } catch (err) {
         outputError(handleApiError(err));
       }

@@ -1,0 +1,349 @@
+{
+  "metadata": [
+    {
+      "idSolarStudyMetadata": 1,
+      "solarStudyId": "665000000000000000000001",
+      "clientName": "Ana 1",
+      "peakPower": 5.4,
+      "anualProduction": 7000,
+      "anualConsumption": 5000,
+      "totalCost": 6500,
+      "sellingPrice": 7800,
+      "currentState": {
+        "idSolarStudyMetadataState": 4,
+        "name": "Ganado"
+      },
+      "creationTimestamp": "2026-03-01T10:00:00.000Z",
+      "stateChanges": []
+    },
+    {
+      "idSolarStudyMetadata": 2,
+      "solarStudyId": "665000000000000000000002",
+      "clientName": "Ana 2",
+      "peakPower": 5.4,
+      "anualProduction": 7000,
+      "anualConsumption": 5000,
+      "totalCost": 6500,
+      "sellingPrice": 7800,
+      "currentState": {
+        "idSolarStudyMetadataState": 4,
+        "name": "Ganado"
+      },
+      "creationTimestamp": "2026-03-02T10:00:00.000Z",
+      "stateChanges": []
+    }
+  ],
+  "states": [
+    {
+      "idSolarStudyMetadataState": 4,
+      "name": "Ganado",
+      "clientUID": "client-1"
+    },
+    {
+      "idSolarStudyMetadataState": 5,
+      "name": "Perdido",
+      "clientUID": "client-1"
+    }
+  ],
+  "study": {
+    "_id": "665000000000000000000001",
+    "id": "local-1",
+    "name": "Estudio Ana",
+    "clientUID": "client-1",
+    "market": "es",
+    "selectedSolarStudyMode": "individual",
+    "creationTimestamp": "2026-03-01T10:00:00.000Z",
+    "clientDetails": {
+      "identifier": "Ana"
+    },
+    "comments": [
+      {
+        "content": "hola",
+        "type": "commented"
+      }
+    ],
+    "consumption": {
+      "identifier": "production",
+      "days": [
+        {
+          "date": "2026-01-01",
+          "valuesList": {
+            "0": 0.5,
+            "1": 0.5,
+            "2": 0.5,
+            "3": 0.5,
+            "4": 0.5,
+            "5": 0.5,
+            "6": 0.5,
+            "7": 0.5,
+            "8": 0.5,
+            "9": 0.5,
+            "10": 0.5,
+            "11": 0.5,
+            "12": 0.5,
+            "13": 0.5,
+            "14": 0.5,
+            "15": 0.5,
+            "16": 0.5,
+            "17": 0.5,
+            "18": 0.5,
+            "19": 0.5,
+            "20": 0.5,
+            "21": 0.5,
+            "22": 0.5,
+            "23": 0.5
+          }
+        },
+        {
+          "date": "2026-01-02",
+          "valuesList": {
+            "0": 0.5,
+            "1": 0.5,
+            "2": 0.5,
+            "3": 0.5,
+            "4": 0.5,
+            "5": 0.5,
+            "6": 0.5,
+            "7": 0.5,
+            "8": 0.5,
+            "9": 0.5,
+            "10": 0.5,
+            "11": 0.5,
+            "12": 0.5,
+            "13": 0.5,
+            "14": 0.5,
+            "15": 0.5,
+            "16": 0.5,
+            "17": 0.5,
+            "18": 0.5,
+            "19": 0.5,
+            "20": 0.5,
+            "21": 0.5,
+            "22": 0.5,
+            "23": 0.5
+          }
+        }
+      ]
+    },
+    "economicResults": {
+      "ppaAnalysis": null
+    },
+    "atrTariff": {
+      "idTarifaATR": 13,
+      "nombre": "2.0TD",
+      "periods": 3
+    }
+  },
+  "curve": {
+    "identifier": "production",
+    "days": [
+      {
+        "date": "2026-01-01",
+        "valuesList": {
+          "0": 0.5,
+          "1": 0.5,
+          "2": 0.5,
+          "3": 0.5,
+          "4": 0.5,
+          "5": 0.5,
+          "6": 0.5,
+          "7": 0.5,
+          "8": 0.5,
+          "9": 0.5,
+          "10": 0.5,
+          "11": 0.5,
+          "12": 0.5,
+          "13": 0.5,
+          "14": 0.5,
+          "15": 0.5,
+          "16": 0.5,
+          "17": 0.5,
+          "18": 0.5,
+          "19": 0.5,
+          "20": 0.5,
+          "21": 0.5,
+          "22": 0.5,
+          "23": 0.5
+        }
+      },
+      {
+        "date": "2026-01-02",
+        "valuesList": {
+          "0": 0.5,
+          "1": 0.5,
+          "2": 0.5,
+          "3": 0.5,
+          "4": 0.5,
+          "5": 0.5,
+          "6": 0.5,
+          "7": 0.5,
+          "8": 0.5,
+          "9": 0.5,
+          "10": 0.5,
+          "11": 0.5,
+          "12": 0.5,
+          "13": 0.5,
+          "14": 0.5,
+          "15": 0.5,
+          "16": 0.5,
+          "17": 0.5,
+          "18": 0.5,
+          "19": 0.5,
+          "20": 0.5,
+          "21": 0.5,
+          "22": 0.5,
+          "23": 0.5
+        }
+      }
+    ]
+  },
+  "angles": {
+    "azimuth": 180,
+    "slope": 34
+  },
+  "ppaTemplates": [
+    {
+      "_id": "670000000000000000000001",
+      "name": "PPA 1",
+      "mode": "fixed",
+      "ppaPrice": 0.08
+    },
+    {
+      "_id": "670000000000000000000002",
+      "name": "PPA 2",
+      "mode": "indexed",
+      "ppaPrice": 0.07
+    }
+  ],
+  "tariffs": [
+    {
+      "idTarifaATR": 13,
+      "nombre": "2.0TD",
+      "pais": "es",
+      "label": "2.0TD",
+      "periods": 3,
+      "active": true
+    },
+    {
+      "idTarifaATR": 14,
+      "nombre": "3.0TD",
+      "pais": "es",
+      "label": "3.0TD",
+      "periods": 6,
+      "active": true
+    }
+  ],
+  "zones": [
+    {
+      "idZona": 1,
+      "nombre": "Peninsula",
+      "pais": "es"
+    }
+  ],
+  "periods": [
+    {
+      "date": "2026-01-01",
+      "valuesList": {
+        "0": 3,
+        "1": 3,
+        "2": 3,
+        "3": 3,
+        "4": 3,
+        "5": 3,
+        "6": 3,
+        "7": 3,
+        "8": 3,
+        "9": 3,
+        "10": 1,
+        "11": 1,
+        "12": 1,
+        "13": 1,
+        "14": 1,
+        "15": 1,
+        "16": 1,
+        "17": 1,
+        "18": 1,
+        "19": 1,
+        "20": 1,
+        "21": 1,
+        "22": 1,
+        "23": 1
+      }
+    }
+  ],
+  "reeProfiles": {
+    "startDate": "2026-01-01",
+    "endDate": "2026-12-31",
+    "tariff": "2.0TD",
+    "type": "Final",
+    "profile": [
+      {
+        "date": "2026-01-01",
+        "valuesList": {
+          "0": 0.5,
+          "1": 0.5,
+          "2": 0.5,
+          "3": 0.5,
+          "4": 0.5,
+          "5": 0.5,
+          "6": 0.5,
+          "7": 0.5,
+          "8": 0.5,
+          "9": 0.5,
+          "10": 0.5,
+          "11": 0.5,
+          "12": 0.5,
+          "13": 0.5,
+          "14": 0.5,
+          "15": 0.5,
+          "16": 0.5,
+          "17": 0.5,
+          "18": 0.5,
+          "19": 0.5,
+          "20": 0.5,
+          "21": 0.5,
+          "22": 0.5,
+          "23": 0.5
+        }
+      }
+    ]
+  },
+  "tags": [
+    {
+      "label": "Bar",
+      "value": "bar"
+    }
+  ],
+  "customProfiles": [
+    {
+      "idCustomProfile": "cp-1",
+      "tags": [
+        "bar"
+      ],
+      "profilingStrategy": "monthly"
+    },
+    {
+      "idCustomProfile": "cp-2",
+      "tags": [],
+      "profilingStrategy": "daily"
+    }
+  ],
+  "notification": {
+    "idNotification": 31,
+    "notificationType": "new_comment"
+  },
+  "panel": {
+    "solarPanelId": 456,
+    "name": "Panel",
+    "peakPower": 450,
+    "width": 1134,
+    "heigth": 1722
+  },
+  "kit": {
+    "idSolarKit": 7,
+    "identifier": "Kit 7",
+    "peakPower": 5.4,
+    "active": true,
+    "phaseNumber": "single_phase"
+  }
+}

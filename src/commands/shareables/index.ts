@@ -1,5 +1,7 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { SHAREABLES } from '../../api/ops/settings.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
@@ -67,8 +69,6 @@ export function registerShareableCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(shareables);
-        const client = createServiceClient('templates', global);
-
         const extra = (await parseData(opts.data)) || {};
         const body: Record<string, unknown> = {
           elementId: opts.elementId,
@@ -87,9 +87,8 @@ export function registerShareableCommands(program: Command): void {
           ...extra,
         };
 
-        const url = opts.linkParams ? `/shareable?${opts.linkParams}` : '/shareable';
-        const res = await client.post(url, body);
-        output(res.data, { ...global, save: global.save });
+        const shareable = await invoke(SHAREABLES.create, global, { body, linkParams: opts.linkParams });
+        output(shareable, { ...global, save: global.save });
       } catch (err) {
         outputError(handleApiError(err));
       }

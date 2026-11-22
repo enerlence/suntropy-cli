@@ -1,5 +1,7 @@
 import { Command } from 'commander';
-import { createServiceClient, handleApiError } from '../../client.js';
+import { handleApiError } from '../../client.js';
+import { invoke } from '../../api/core.js';
+import { PPA, STUDIES } from '../../api/ops/studies.js';
 import { output, outputError, type OutputOptions } from '../../output.js';
 
 function getGlobalOpts(cmd: Command): OutputOptions & Record<string, unknown> {
@@ -76,9 +78,7 @@ export function registerPPACommands(program: Command): void {
     .action(async () => {
       try {
         const global = getGlobalOpts(ppa);
-        const client = createServiceClient('solar', global);
-        const res = await client.get('/solar-study/ppa-templates');
-        output(res.data, global);
+        output(await invoke(PPA.list, global, undefined), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -94,9 +94,7 @@ export function registerPPACommands(program: Command): void {
     .action(async (id: string) => {
       try {
         const global = getGlobalOpts(ppa);
-        const client = createServiceClient('solar', global);
-        const res = await client.get(`/solar-study/ppa-templates/${id}`);
-        output(res.data, global);
+        output(await invoke(PPA.get, global, { id }), global);
       } catch (err) {
         outputError(handleApiError(err));
       }
@@ -125,12 +123,9 @@ export function registerPPACommands(program: Command): void {
     .action(async (opts) => {
       try {
         const global = getGlobalOpts(ppa);
-        const client = createServiceClient('solar', global);
-
         let study: unknown;
         if (opts.study) {
-          const res = await client.get(`/solar-study/findById/${opts.study}`);
-          study = res.data;
+          study = await invoke(STUDIES.get, global, { id: opts.study });
         } else if (opts.data) {
           study = await parseData(opts.data);
         } else {
@@ -138,11 +133,8 @@ export function registerPPACommands(program: Command): void {
           return;
         }
 
-        const body: Record<string, unknown> = { data: study };
-        if (opts.template) body.ppaTemplateId = opts.template;
-
-        const res = await client.post('/solar-study/calculate-ppa-on-study', body);
-        const result = opts.raw ? res.data : compactStudyOutput(res.data);
+        const calculated = await invoke(PPA.calculate, global, { study, templateId: opts.template });
+        const result = opts.raw ? calculated : compactStudyOutput(calculated);
         output(result, { ...global, save: opts.saveFile || global.save });
       } catch (err) {
         outputError(handleApiError(err));

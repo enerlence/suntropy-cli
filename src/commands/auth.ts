@@ -18,6 +18,7 @@ import {
   DeviceFlowError,
   openBrowser,
   parseScopes,
+  DEFAULT_WEB_SCOPES,
   pollDeviceToken,
   requestDeviceCode,
 } from '../device-flow.js';
@@ -133,7 +134,7 @@ export function registerAuthCommands(program: Command): void {
     .description(WEB_LOGIN_HELP)
     .option('--web', 'Browser login (device code); stores an API v2 key (sun_…)')
     .option('--device-name <name>', 'With --web: name shown on the approval page and in the key label (default: hostname)')
-    .option('--scopes <scopes>', 'With --web: comma-separated API v2 scopes (default: leadgen:read,leadgen:write,credits:read)')
+    .option('--scopes <scopes>', 'With --web: comma-separated API v2 scopes (default: the 17 scopes the CLI uses, see README)')
     .option('--no-browser', 'With --web: do not try to open the browser, just print the URL')
     .option('--email <email>', 'User email')
     .option('--password <password>', 'User password')
@@ -401,7 +402,7 @@ async function webLogin(
 
     const code = await requestDeviceCode(gateway.url, {
       deviceName: (opts.deviceName ?? defaultDeviceName()).trim() || undefined,
-      scopes: parseScopes(opts.scopes),
+      scopes: parseScopes(opts.scopes) ?? [...DEFAULT_WEB_SCOPES],
     });
     const url = code.verification_uri_complete || code.verification_uri;
 
