@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { output, outputError } from '../../output.js';
-import { call, getGlobalOpts, satvoltClient, satvoltError, SATVOLT_DEV_BASE_URL } from './api.js';
+import { call, getGlobalOpts, satvoltClient, satvoltError } from './api.js';
+import { registerSatvoltCreditCommands } from './credits.js';
 import { registerSatvoltCampaignCommands } from './campaigns.js';
 import { registerSatvoltPipelineCommands } from './pipeline.js';
 import { registerSatvoltLeadCommands } from './leads.js';
@@ -11,9 +12,11 @@ export function registerSatvoltCommands(program: Command): void {
   const satvolt = program
     .command('satvolt')
     .description(
-      'Satvolt lead-generation campaigns (public API /satvolt/api/v1), with the same auth token.\n' +
-        `Preliminary testing phase: every call is pinned to the dev cluster (${SATVOLT_DEV_BASE_URL}),\n` +
-        'whatever the active profile says. Override with SUNTROPY_SATVOLT_URL, or use a localhost server.\n' +
+      'Satvolt lead-generation campaigns (LeadGen) and credits.\n' +
+        'Auth: an API v2 key (sun_…, from `suntropy auth login --web`) goes to the API gateway\n' +
+        '(<gateway>/api/v2/leadgen); a user session or legacy key goes to <server>/satvolt/api/v1.\n' +
+        'Same server as the rest of the CLI (prod by default). SUNTROPY_SATVOLT_URL overrides it for\n' +
+        'local development; SUNTROPY_GATEWAY_URL overrides the gateway.\n' +
         'Typical flow:\n' +
         '  satvolt catalog actions                      actions and their config schema\n' +
         '  satvolt campaigns create --circle ... --steps @steps.json\n' +
@@ -24,7 +27,8 @@ export function registerSatvoltCommands(program: Command): void {
         '  satvolt templates create --name <n> --from-campaign <id> · campaigns create --template <n>\n' +
         '  satvolt campaigns extend <id> --max-leads N · leads run-step <id> <leadId> <step>\n' +
         '  satvolt campaigns pause <id> · unpause <id> · cancel <id> --yes\n' +
-        '  satvolt usage [--month YYYY-MM]              credits spent by the account this month',
+        '  satvolt usage [--month YYYY-MM]              credits spent by the account this month\n' +
+        '  satvolt credits balance · credits packs · credits checkout <packId>   (the agent never pays)',
     );
 
   registerSatvoltCampaignCommands(satvolt);
@@ -32,6 +36,7 @@ export function registerSatvoltCommands(program: Command): void {
   registerSatvoltLeadCommands(satvolt);
   registerSatvoltExportTableCommands(satvolt);
   registerSatvoltTemplateCommands(satvolt);
+  registerSatvoltCreditCommands(satvolt);
 
   // --- usage (account) ---
   satvolt

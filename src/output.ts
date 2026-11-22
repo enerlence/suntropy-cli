@@ -113,9 +113,20 @@ export function outputError(err: unknown): void {
     process.stderr.write(JSON.stringify(out) + '\n');
   } else {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(JSON.stringify({ error: true, message: msg }) + '\n');
+    const code = err instanceof Error && typeof (err as { code?: unknown }).code === 'string' ? (err as unknown as { code: string }).code : undefined;
+    process.stderr.write(JSON.stringify({ error: true, message: msg, ...(code ? { code } : {}) }) + '\n');
   }
   process.exitCode = 1;
+}
+
+/**
+ * Streaming output: one compact JSON object per line (NDJSON), written as soon
+ * as the event happens. For long-running commands that report progress to an
+ * agent before they finish (e.g. `auth login --web`); `output()` pretty-prints
+ * over several lines, which a line reader cannot split into events.
+ */
+export function outputLine(event: Record<string, unknown>): void {
+  process.stdout.write(JSON.stringify(event) + '\n');
 }
 
 /** Wrap paginated response */

@@ -1,7 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { readFileSync } from 'fs';
 import type { Command } from 'commander';
-import { createServiceClient, type ApiError } from '../../client.js';
+import { createApiClient, handleApiError, type ApiError } from '../../client.js';
 import type { OutputOptions } from '../../output.js';
 
 export type GlobalOpts = OutputOptions & {
@@ -17,50 +17,64 @@ export function getGlobalOpts(cmd: Command): GlobalOpts {
   return root.opts() as GlobalOpts;
 }
 
-/**
- * Satvolt is only deployed on the dev cluster; there is no Satvolt behind
- * `api.enerlence.com` yet, so the path-based routing of `getServiceUrl` would
- * send every call to a 404. While the preliminary testing phase lasts, any
- * non-local server is rewritten to dev so `suntropy satvolt ...` works with
- * the default profile without having to remember `--server`.
- *
- * TODO: drop this once Satvolt is deployed to production — `getServiceUrl`
- * already resolves `<server>/satvolt` on its own.
- */
-export const SATVOLT_DEV_BASE_URL = 'https://api-dev.enerlence.com/satvolt';
+/** Satvolt public API behind the gateway, for API v2 keys (`sun_…`). */
+export const LEADGEN_V2_PREFIX = '/api/v2/leadgen';
 
 /**
- * Two escape hatches so the hardcoded host does not get in the way:
- * `SUNTROPY_SATVOLT_URL` points anywhere, and a local server is left alone so
- * developing against `localhost:8099` still works.
- */
-function resolveSatvoltBaseUrl(resolved: string): string {
-  const override = process.env.SUNTROPY_SATVOLT_URL?.trim();
-  if (override) return override.replace(/\/+$/, '');
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(resolved)) return resolved;
-  return SATVOLT_DEV_BASE_URL;
-}
-
-/**
- * Client for the Satvolt public API (`/api/v1` on the satvolt service:
- * `<server>/satvolt/api/v1` in production, `localhost:8099/api/v1` locally).
+ * Client for the Satvolt public API. The route paths are the same either way:
+ * - API v2 key (`sun_…`): `<gateway>/api/v2/leadgen` (see `resolveGatewayUrl`);
+ * - user JWT or legacy key: `<server>/satvolt/api/v1` by `getServiceUrl`, like
+ *   any other service (`localhost:8099/api/v1` locally). `SUNTROPY_SATVOLT_URL`
+ *   points it elsewhere, for local development.
  */
 export function satvoltClient(global: GlobalOpts, timeout = 60000): AxiosInstance {
-  const client = createServiceClient('satvolt', global);
-  const base = resolveSatvoltBaseUrl(client.defaults.baseURL ?? '');
-  if (global.verbose && base !== client.defaults.baseURL) {
-    process.stderr.write(`\u2192 satvolt pinned to ${base} (preliminary testing phase)\n`);
-  }
-  client.defaults.baseURL = `${base}/api/v1`;
+  const override = process.env.SUNTROPY_SATVOLT_URL?.trim().replace(/\/+$/, '');
+  const { client } = createApiClient(
+    {
+      v1: { service: 'satvolt', suffix: '/api/v1', baseUrlOverride: override || undefined },
+      v2: { prefix: LEADGEN_V2_PREFIX },
+    },
+    global,
+  );
   client.defaults.timeout = timeout;
   return client;
 }
 
-/** Envelope returned by every JSON endpoint of the public API. */
+/**
+ * Envelope of every JSON endpoint. Satvolt answers `{ code, data, error }`; the
+ * gateway (API v2) re-wraps it as `{ data, pagination?, requestId }` or
+ * `{ error: { code, message }, requestId }`. The payload is `data` in both.
+ */
 interface Envelope<T> {
   code?: number;
   data?: T;
+  pagination?: unknown;
+  requestId?: string;
   error?: { code?: string; message?: string; details?: unknown };
+}
+
+/**
+ * What to do about the error codes an agent can hit, appended to the server's
+ * message so the user knows the next step instead of a bare status.
+ */
+const ERROR_HINTS: Record<string, string> = {
+  INVALID_KEY: 'The API key is revoked or expired: run `suntropy auth login --web` again.',
+  API_KEY_REQUIRED: 'This route needs an API v2 key: run `suntropy auth login --web`.',
+  INSUFFICIENT_SCOPE:
+    'The API key lacks the scope for this action (leadgen:read, leadgen:write or credits:read). ' +
+    'Create one with the right scopes: `suntropy auth login --web`.',
+  SATVOLT_NOT_ENABLED:
+    'LeadGen is not enabled for this account. Request access at https://www.suntropy.ai/leadgen/#acceso.',
+  ACCESS_CHECK_UNAVAILABLE: 'The account check is temporarily unavailable. Try again in a few minutes.',
+  UNAUTHORIZED: 'The session expired or the token is not valid: log in again (`suntropy auth login --web`).',
+  V2_REQUIRED: 'API v2 keys only work on /api/v2 routes.',
+  UPSTREAM_TIMEOUT: 'The service took too long to answer. Try again.',
+};
+
+function withHint(code: string | undefined, message: string): string {
+  const hint = code ? ERROR_HINTS[code] : undefined;
+  if (!hint) return message;
+  return message && message !== code && !message.includes(hint) ? `${hint} (${message})` : hint;
 }
 
 export async function call<T = any>(
@@ -128,13 +142,24 @@ export function satvoltError(err: unknown): ApiError & { code?: string } {
       }
     }
     const envelope = body as Envelope<unknown> | undefined;
-    if (envelope?.error) {
+    if (envelope?.error && typeof envelope.error === 'object') {
+      const code = envelope.error.code;
       return {
         error: true,
         status: err.response?.status ?? 0,
-        code: envelope.error.code,
-        message: envelope.error.message || envelope.error.code || 'Request failed',
-        details: envelope.error.details,
+        code,
+        message: withHint(code, envelope.error.message || code || 'Request failed'),
+        details: envelope.error.details ?? (envelope.requestId ? { requestId: envelope.requestId } : undefined),
+      };
+    }
+    // NestJS errors (e.g. payments): { statusCode, message, error }.
+    const nest = body as { message?: unknown } | undefined;
+    if (nest && typeof nest === 'object' && (typeof nest.message === 'string' || Array.isArray(nest.message))) {
+      return {
+        error: true,
+        status: err.response?.status ?? 0,
+        message: Array.isArray(nest.message) ? nest.message.join('; ') : (nest.message as string),
+        details: body,
       };
     }
     return {
@@ -142,12 +167,12 @@ export function satvoltError(err: unknown): ApiError & { code?: string } {
       status: err.response?.status ?? 0,
       message:
         err.response?.status === 404 && !envelope
-          ? 'Endpoint not found: is the Satvolt public API deployed on this server?'
+          ? 'Endpoint not found: is the Satvolt public API (or the API v2 gateway) deployed on this server?'
           : err.response?.statusText || err.message,
       details: body,
     };
   }
-  return { error: true, status: 0, message: err instanceof Error ? err.message : String(err) };
+  return handleApiError(err);
 }
 
 /**
